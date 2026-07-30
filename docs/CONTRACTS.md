@@ -64,7 +64,7 @@ G.world.init(scene)               // 建店：地板/墙/门/货架/收银台/�
 G.world.slots                     // [{id, pos:THREE.Vector3, productId|null, count}]
 G.world.findEmptyOrMatchingSlot(pid)      // -> slot|null（上架用）
 G.world.findSlotWithProduct(pid)          // -> slot|null（顾客拿货用）
-G.world.addItem(slot, pid, fromPos /*可选 THREE.Vector3，飞行动画起点；省略则无飞行*/) /*->bool*/  G.world.removeItem(slot) /*->bool*/  // 同步更新货架上的可见商品堆
+G.world.addItem(slot, pid, fromPos /*可选 THREE.Vector3，飞行动画起点；省略则无飞行*/) /*->bool*/  G.world.removeItem(slot) /*->bool；count 归零保留 productId 以显示缺货*/  // 同步更新货架上的可见商品堆
 G.world.updateSlotTag(slot)   // 幂等；按 slot 当前 productId/count 与 G.state.prices 重绘价签贴图
 G.world.getStockCount(pid)
 G.world.spawnBox(pid)             // 卸货区生成纸箱实体 {mesh, productId, itemsLeft}，注册为可交互

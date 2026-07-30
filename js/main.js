@@ -397,6 +397,34 @@
         '增删前 ' + incBefore + ' → 删2后 ' + incAfter + ' → 补2后 ' + (incSlot ? incSlot.itemGroup.children.length : -1));
       ck('world.slotSharedGeo', incGeoSame, '格位商品方块必须复用同一 BoxGeometry 实例');
 
+      /* --- 价签三状态（Task 4）--- */
+      var stockedSlot = G.world.findSlotWithProduct('f_noodle');
+      var emptySlot = null;
+      for (var ei = 0; ei < G.world.slots.length; ei++) {
+        if (G.world.slots[ei].productId === null) { emptySlot = G.world.slots[ei]; break; }
+      }
+      ck('world.tagStateStocked', !!stockedSlot && stockedSlot.tagState === 'stocked',
+        '有货格 tagState = ' + (stockedSlot && stockedSlot.tagState));
+      ck('world.tagStateEmpty', !!emptySlot && emptySlot.tagState === 'empty',
+        '空格 tagState = ' + (emptySlot && emptySlot.tagState));
+
+      // 取空一格 → 应变 'out'（缺货）；再补回去 → 变回 'stocked'
+      var outSlot = G.world.findSlotWithProduct('d_water');
+      var outGuard = 0;
+      while (outSlot && outSlot.count > 0 && outGuard++ < 40) G.world.removeItem(outSlot);
+      ck('world.tagStateOut', !!outSlot && outSlot.tagState === 'out',
+        '取空后 tagState = ' + (outSlot && outSlot.tagState));
+      if (outSlot) G.world.addItem(outSlot, 'd_water');
+      ck('world.tagStateBack', !!outSlot && outSlot.tagState === 'stocked',
+        '补货后 tagState = ' + (outSlot && outSlot.tagState));
+
+      // 改价必须刷新价签贴图（换了 texture 实例即视为已刷新）
+      var texBefore = stockedSlot ? stockedSlot.tagMesh.material.map : null;
+      G.shop.setPrice('f_noodle', 3.7);
+      ck('world.tagPriceRefresh', !!texBefore && stockedSlot.tagMesh.material.map !== texBefore,
+        '改价后价签贴图未刷新');
+      G.shop.setPrice('f_noodle', 2.2);   // 还原，后续断言依赖 r=1.0 必买
+
       /* --- 定价到市场价（r=1.0，必买）--- */
       G.shop.setPrice('f_noodle', 2.2);
       G.shop.setPrice('d_water', 1.2);

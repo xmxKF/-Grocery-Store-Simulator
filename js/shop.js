@@ -85,6 +85,12 @@
     if (!p) return false;
     var clamped = G.clamp(price, 0.1, p.market * 3);
     G.state.prices[pid] = Math.round(clamped * 10) / 10;
+    if (G.world && G.world.updateSlotTag) {
+      var slots = G.world.slots || [];
+      for (var i = 0; i < slots.length; i++) {
+        if (slots[i].productId === pid) G.world.updateSlotTag(slots[i]);
+      }
+    }
     return true;
   }
 

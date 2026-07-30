@@ -54,6 +54,56 @@
     return HIT_GEO;
   }
 
+  // 价签贴图缓存：键为 (state|pid|price)，texture 跨格复用；材质仍逐格独立（见 CONTRACTS 职责裁定）
+  var TAG_TEX = {};
+  var TAG_BG = { stocked: null, out: '#E8B54C', empty: '#8C9AA6' };   // stocked 用类目色，运行时填
+
+  function tagTexture(state, product, price) {
+    var key = state + '|' + (product ? product.id : '-') + '|' + (price == null ? '-' : price);
+    if (TAG_TEX[key]) return TAG_TEX[key];
+
+    var W = 256, H = 28;
+    var cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    var g = cv.getContext('2d');
+
+    var bg = TAG_BG[state] || '#8C9AA6';
+    if (state === 'stocked' && product) bg = '#' + ('000000' + (CAT_COLORS[product.cat] || 0x8C9AA6).toString(16)).slice(-6);
+    g.fillStyle = bg;
+    g.fillRect(0, 0, W, H);
+
+    g.fillStyle = '#12161B';
+    g.textBaseline = 'middle';
+    if (state === 'empty') {
+      g.font = '600 15px "Microsoft YaHei","PingFang SC",sans-serif';
+      g.fillText('空', 8, H / 2);
+    } else {
+      g.font = '600 15px "Microsoft YaHei","PingFang SC",sans-serif';
+      g.fillText(product ? product.name : '', 8, H / 2);
+      var right = (state === 'out') ? '缺货' : ('¥' + price.toFixed(1));
+      g.textAlign = 'right';
+      g.fillText(right, W - 8, H / 2);
+      g.textAlign = 'left';
+    }
+
+    var tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    TAG_TEX[key] = tex;
+    return tex;
+  }
+
+  function updateSlotTag(slot) {
+    if (!slot || !slot.tagMesh) return;
+    var product = slot.productId ? G.data.productById(slot.productId) : null;
+    var state = !product ? 'empty' : (slot.count > 0 ? 'stocked' : 'out');
+    var price = product ? ((G.state && G.state.prices && G.state.prices[product.id]) || product.market) : null;
+
+    slot.tagState = state;
+    slot.tagMesh.material.map = tagTexture(state, product, price);
+    slot.tagMesh.material.color.setHex(0xFFFFFF);   // 贴图自带底色，材质色需为白，否则相乘变暗
+    slot.tagMesh.material.needsUpdate = true;
+  }
+
   // 货架/冷藏柜格位中心坐标（沿 z=0 中央主过道排布，前方 aisleSpot 均在同一条直线上）
   var SHELF_POSITIONS = [
     { x: -5.0, z: -1.5 }, { x: -2.5, z: -1.5 }, { x: 0.0, z: -1.5 }, { x: 2.5, z: -1.5 }, // Lv1 起 4 组
@@ -325,6 +375,7 @@
         groupSlots.push(slot);
         allSlots.push(slot);
         registerInteractable(holder, { type: 'shelfSlot', data: { slot: slot }, prompt: '' });
+        updateSlotTag(slot);
       });
     });
 
@@ -402,6 +453,7 @@
       var slot = allSlots[i];
       if (slot.fridge !== wantFridge) continue;
       if (slot.productId === null) return slot;
+      if (slot.count === 0) return slot;                              // 缺货格可改放任意商品
       if (slot.productId === pid && slot.count < product.slotCap) return slot;
     }
     return null;
@@ -415,17 +467,18 @@
     return null;
   }
 
-  function addItem(slot, pid) {
+  function addItem(slot, pid, fromPos) {
     if (!slot) return false;
     var product = G.data.productById(pid);
     if (!product) return false;
     if (slot.fridge && product.cat !== '生鲜') return false;
     if (!slot.fridge && product.cat === '生鲜') return false;
-    if (slot.productId && slot.productId !== pid) return false;
+    if (slot.productId && slot.count > 0 && slot.productId !== pid) return false;
     if (slot.productId === pid && slot.count >= product.slotCap) return false;
     slot.productId = pid;
     slot.count += 1;
     updateSlotVisual(slot);
+    updateSlotTag(slot);
     if (slot.count <= slot.itemGroup.children.length) popInItem(slot.itemGroup.children[slot.count - 1]);
     return true;
   }
@@ -433,8 +486,10 @@
   function removeItem(slot) {
     if (!slot || !slot.productId || slot.count <= 0) return false;
     slot.count -= 1;
-    if (slot.count <= 0) { slot.productId = null; slot.count = 0; }
+    // count 归零后保留 productId，价签才能显示「缺货」而非「空」；
+    // findEmptyOrMatchingSlot 视 count===0 的格为可用（见该函数的 slot.productId === pid 分支 + count < slotCap）
     updateSlotVisual(slot);
+    updateSlotTag(slot);
     return true;
   }
 
@@ -507,6 +562,7 @@
       slot.productId = d.productId || null;
       slot.count = d.count || 0;
       updateSlotVisual(slot);
+      updateSlotTag(slot);
     });
   }
 
@@ -529,6 +585,7 @@
     spawnBox: spawnBox,
     updateBoxVisual: updateBoxVisual,
     registerInteractable: registerInteractable,
+    updateSlotTag: updateSlotTag,
     interactables: interactables,
     colliders: colliders,
     nav: nav,
