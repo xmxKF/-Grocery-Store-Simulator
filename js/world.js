@@ -357,6 +357,7 @@
         holder.add(hit);
 
         // 可见价签：贴在该格下方层板（y-0.04）的前缘；同时是准星高亮的载体
+        // 价签不得再加厚或前移：player.js occluded() 自碰撞容差余量仅 0.01m，超出即全部上架射线失效
         var tag = new THREE.Mesh(tagGeo(), flatMat(0x8C9AA6));
         tag.position.set(pos.x, y - 0.055, frontZ + facing * 0.02);
         holder.add(tag);
@@ -437,14 +438,14 @@
 
   function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
-  function flyItem(slot, product, fromPos, targetLocal) {
+  function flyItem(slot, product, fromPos, targetLocal, idx) {
     if (!sceneRef || typeof requestAnimationFrame !== 'function') return null;
     var mesh = new THREE.Mesh(itemGeo(), itemMat(product.color));
     mesh.position.copy(fromPos);
     sceneRef.add(mesh);
 
     var to = slot.itemGroup.position.clone().add(targetLocal);
-    var f = { mesh: mesh, from: fromPos.clone(), to: to, t0: Date.now(), slot: slot, onDone: null };
+    var f = { mesh: mesh, from: fromPos.clone(), to: to, t0: Date.now(), slot: slot, onDone: null, pid: product.id, idx: idx };
     flights.push(f);
     if (!flightRaf) { flightRaf = true; requestAnimationFrame(stepFlights); }
     return f;
@@ -454,6 +455,11 @@
     var now = Date.now();
     for (var i = flights.length - 1; i >= 0; i--) {
       var f = flights[i];
+      if (f.slot.productId !== f.pid || f.slot.count <= f.idx) {
+        if (f.mesh.parent) f.mesh.parent.remove(f.mesh);
+        flights.splice(i, 1);
+        continue;   // 中断销毁：不调 onDone，格位已被清空/换商品（spec §5.2）
+      }
       var k = Math.min(1, (now - f.t0) / 180);
       f.mesh.position.lerpVectors(f.from, f.to, easeOutCubic(k));
       if (k >= 1) {
@@ -519,7 +525,7 @@
     if (fromPos && idx < 16) {
       // 先飞，落位后才让正式方块出现；飞行期间格内少一个方块（180ms，肉眼等价于「正在放上去」）
       var local = itemLocalPos(idx, slot.faceZ);
-      var f = flyItem(slot, product, fromPos, local);
+      var f = flyItem(slot, product, fromPos, local, idx);
       if (f) {
         f.onDone = function () {
           updateSlotVisual(slot);
@@ -538,7 +544,7 @@
     if (!slot || !slot.productId || slot.count <= 0) return false;
     slot.count -= 1;
     // count 归零后保留 productId，价签才能显示「缺货」而非「空」；
-    // findEmptyOrMatchingSlot 视 count===0 的格为可用（见该函数的 slot.productId === pid 分支 + count < slotCap）
+    // findEmptyOrMatchingSlot 视 count===0 的格为可用（其 `if (slot.count === 0) return slot;` 分支）
     updateSlotVisual(slot);
     updateSlotTag(slot);
     return true;

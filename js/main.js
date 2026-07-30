@@ -521,7 +521,9 @@
       ck('checkout.poseRestored',
         !!poseBefore && !!poseAfter &&
         Math.abs(poseAfter.x - poseBefore.x) < 0.02 &&
-        Math.abs(poseAfter.z - poseBefore.z) < 0.02,
+        Math.abs(poseAfter.z - poseBefore.z) < 0.02 &&
+        Math.abs(poseAfter.yaw - poseBefore.yaw) < 0.02 &&
+        Math.abs(poseAfter.pitch - poseBefore.pitch) < 0.02,
         JSON.stringify({ before: poseBefore, after: poseAfter }));
       ck('checkout.stanceCleared', G.checkout.stance === null, '退出后 stance 应置空');
 
