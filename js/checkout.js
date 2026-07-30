@@ -19,7 +19,11 @@
   var camRef = null;
   var frame = null;        // 传送带坐标系
   var scanCd = 0;
-  var camLock = null;
+  var stance = null;
+  var savedPose = null;
+  var tween = null;
+  var exiting = false;
+  var cashierWasVisible = false;
   var posDom = null;
   var posDirty = true;
   var flashTotal = false;
@@ -58,18 +62,6 @@
     }
     return null;
   }
-
-  /* 契约也没有暴露 camera：在 main.js 调用 G.player.init(camera, dom) 时顺手记下相机引用。
-     只是旁观一个已有的契约调用，不新增跨模块 API；player 的行为完全不变。 */
-  (function hookPlayerInit() {
-    if (!G.player || typeof G.player.init !== 'function' || G.player.__checkoutCam) return;
-    var orig = G.player.init;
-    G.player.__checkoutCam = true;
-    G.player.init = function (cam) {
-      if (cam && cam.isCamera) camRef = cam;
-      return orig.apply(this, arguments);
-    };
-  })();
 
   function camera() {
     if (camRef) return camRef;
@@ -409,46 +401,128 @@
     return posDom;
   }
 
+  /* 站位由传送带几何反推，不硬编码坐标——子项目 C 做多收银台时每台自动各有各的站位。
+     后退 0.93m 落在柜台背侧与西墙之间的空隙（现有布局下约 x=-7.75，即雇佣收银员站桩处）。 */
+  var STANCE_BACK = 0.93;      // 沿 dir 后退距离（dir 由顾客侧指向柜台）
+  var STANCE_EYE = 1.65;       // 与 player.js EYE_HEIGHT 一致
+  // 相机向右偏航 → 画面内容左移，避开右侧 340px 的 #pos 面板。
+  // 注意符号：增大 camera.rotation.y 会让物体在画面中右移，所以这里是「减」。
+  var STANCE_YAW_BIAS = 0.18;
+
+  function itemFieldCenter() {
+    var f = beltFrame();
+    if (!f) return null;
+    // 商品实际落点由 beltPos(i) 决定，取前 8 个位置的均值作为商品场中心，
+    // 比 f.origin（柜台近侧边缘）准确得多——原 startCamLock 看向 f.origin 正是取景偏的成因之一。
+    var c = new THREE.Vector3();
+    for (var i = 0; i < 8; i++) c.add(beltPos(i));
+    return c.multiplyScalar(1 / 8);
+  }
+
+  function computeStance() {
+    var f = beltFrame();
+    var target = itemFieldCenter();
+    if (!f || !target) return null;
+
+    var p = f.origin.clone().addScaledVector(f.dir, STANCE_BACK);
+    p.y = STANCE_EYE;
+
+    // 相机在 YXZ 顺序下的前向为 (-sinYaw·cosPitch, sinPitch, -cosYaw·cosPitch)，
+    // 故对准方向 d 时 yaw = atan2(-d.x, -d.z)。
+    var d = target.clone().sub(p);
+    var yaw = Math.atan2(-d.x, -d.z) - STANCE_YAW_BIAS;
+    var pitch = Math.atan2(d.y, Math.sqrt(d.x * d.x + d.z * d.z));
+    return { pos: p, yaw: yaw, pitch: pitch };
+  }
+
   function enterRegister() {
     if (inRegister) return;
+    var st = computeStance();
+    if (!st) return;
+
+    savedPose = (G.player && G.player.getPose) ? G.player.getPose() : null;
+    stance = st;
+    G.checkout.stance = st;
+
     inRegister = true;
     G.checkout.inRegister = true;   // player.js 据此屏蔽移动/指针锁定
     G.bus.emit('screen', { name: 'pos' });
     var el = posEl();
     if (el) el.style.display = 'block';
-    startCamLock();
+
+    // 站位与收银员站桩重合，进入期间临时隐藏（退出时按 G.state.cashier 还原）
+    cashierWasVisible = !!(G.state && G.state.cashier);
+    if (cashierWasVisible && G.world && G.world.setCashierVisible) G.world.setCashierVisible(false);
+
+    startTween(st.pos, st.yaw, st.pitch);
     posDirty = true;
     renderPos();
   }
 
+  /* 回程过渡走完之前不放开 inRegister：否则 player.update 会在这 300ms 里
+     每帧执行 camera.position.set(pos.x, EYE_HEIGHT, pos.z)（player.js:200）与过渡争夺相机。 */
   function exitRegister() {
-    if (!inRegister) return;
-    inRegister = false;
-    G.checkout.inRegister = false;
-    camLock = null;
+    if (!inRegister || exiting) return;
+    exiting = true;
+    stance = null;
+    G.checkout.stance = null;
+
     var el = posEl();
     if (el) el.style.display = 'none';
-    G.bus.emit('screen', { name: null });
     G.ui.prompt(null);
+
+    if (cashierWasVisible && G.world && G.world.setCashierVisible) G.world.setCashierVisible(true);
+    cashierWasVisible = false;
+
+    var restore = savedPose;
+    savedPose = null;
+
+    function finish() {
+      exiting = false;
+      inRegister = false;
+      G.checkout.inRegister = false;
+      G.bus.emit('screen', { name: null });
+      if (restore && G.player && G.player.setPose) G.player.setPose(restore);
+    }
+
+    if (restore) {
+      startTween(new THREE.Vector3(restore.x, STANCE_EYE, restore.z), restore.yaw, restore.pitch, finish);
+    } else {
+      tween = null;
+      finish();
+    }
   }
 
-  function startCamLock() {
+  /* 300ms ease-out 同时插值位置与朝向（DESIGN §6 的面板过渡档位） */
+  function startTween(toPos, toYaw, toPitch, onDone) {
     var cam = camera();
-    var f = beltFrame();
-    if (!cam || !f) return;
-    var probe = new THREE.Object3D();
-    probe.position.copy(cam.position);
-    probe.up.set(0, 1, 0);
-    probe.lookAt(f.origin);
-    camLock = { from: cam.quaternion.clone(), to: probe.quaternion.clone(), t: 0 };
+    if (!cam) { if (onDone) onDone(); return; }
+    cam.rotation.order = 'YXZ';
+    tween = {
+      fromPos: cam.position.clone(),
+      fromYaw: cam.rotation.y, fromPitch: cam.rotation.x,
+      toPos: toPos.clone(), toYaw: toYaw, toPitch: toPitch,
+      t: 0, onDone: onDone || null
+    };
   }
 
-  function stepCamLock(dt) {
-    if (!camLock || !inRegister) return;
+  function stepTween(dt) {
+    if (!tween) return;
     var cam = camera();
-    if (!cam) { camLock = null; return; }
-    camLock.t = Math.min(1, camLock.t + dt / 0.3);
-    cam.quaternion.copy(camLock.from).slerp(camLock.to, camLock.t);
+    if (!cam) { tween = null; return; }
+    tween.t = Math.min(1, tween.t + dt / 0.3);
+    var k = easeOutCubic(tween.t);
+    cam.position.lerpVectors(tween.fromPos, tween.toPos, k);
+    cam.rotation.set(
+      tween.fromPitch + (tween.toPitch - tween.fromPitch) * k,
+      tween.fromYaw + (tween.toYaw - tween.fromYaw) * k,
+      0
+    );
+    if (tween.t >= 1) {
+      var done = tween.onDone;
+      tween = null;
+      if (done) done();
+    }
   }
 
   /* ---------- #pos 面板 ---------- */
@@ -575,7 +649,7 @@
 
     if (tx) stepTx(dt);
     stepSlides(dt);
-    stepCamLock(dt);
+    stepTween(dt);
     if (scanCd > 0) scanCd -= dt;
     if (posDirty && inRegister) renderPos();
   }
@@ -584,6 +658,7 @@
     joinQueue: joinQueue,
     queue: queue,
     inRegister: false,
+    stance: null,
     enterRegister: enterRegister,
     exitRegister: exitRegister,
     update: update,

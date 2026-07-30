@@ -474,6 +474,54 @@
       });
       ck('customer.queued', ready, ready ? '模拟 ' + round2(G.state.clock) + 's 后队首就绪' : '超时：无顾客到达收银台');
 
+      /* --- 收银台站位系统（Task 7）--- */
+      ck('player.poseApi',
+        typeof G.player.getPose === 'function' && typeof G.player.setPose === 'function' && !!G.player.camera,
+        '缺 getPose/setPose/camera');
+
+      var poseBefore = G.player.getPose ? G.player.getPose() : null;
+      G.checkout.enterRegister();
+      var st = G.checkout.stance;
+      ck('checkout.stanceComputed', !!st && !!st.pos && isFinite(st.yaw) && isFinite(st.pitch),
+        'stance = ' + JSON.stringify(st && { x: round2(st.pos.x), z: round2(st.pos.z), yaw: round2(st.yaw), pitch: round2(st.pitch) }));
+
+      pump(20, function () { return false; });   // 推进 1.0s，让 300ms 过渡走完
+      ck('checkout.stanceReached',
+        !!st && camera.position.distanceTo(st.pos) < 0.02,
+        '相机 ' + JSON.stringify({ x: round2(camera.position.x), y: round2(camera.position.y), z: round2(camera.position.z) }) +
+        ' 应到达 ' + JSON.stringify({ x: round2(st.pos.x), y: round2(st.pos.y), z: round2(st.pos.z) }));
+
+      // 站位必须在柜台背侧（x < 柜台中心 -7.0），而非顾客侧
+      ck('checkout.stanceBehind', !!st && st.pos.x < -7.0,
+        '站位 x = ' + (st && round2(st.pos.x)) + '，应 < -7.0（柜台背侧）');
+
+      // 看得到就点得到：从站位朝 stance 朝向，传送带上每一件商品都应可被射线命中
+      var txAim = currentTx();
+      var aimCam = new THREE.PerspectiveCamera(70, 16 / 9, 0.1, 200);
+      aimCam.position.copy(st.pos);
+      aimCam.rotation.order = 'YXZ';
+      aimCam.rotation.set(st.pitch, st.yaw, 0);
+      aimCam.updateMatrixWorld(true);
+      var frustum = new THREE.Frustum();
+      frustum.setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(aimCam.projectionMatrix, aimCam.matrixWorldInverse));
+      var visN = 0, totN = txAim ? txAim.items.length : 0;
+      for (var ai = 0; ai < totN; ai++) {
+        if (frustum.containsPoint(txAim.items[ai].mesh.position)) visN++;
+      }
+      ck('checkout.stanceFraming', totN > 0 && visN === totN,
+        '传送带 ' + totN + " 件中 " + visN + ' 件在视锥内');
+
+      G.checkout.exitRegister();
+      pump(20, function () { return false; });
+      var poseAfter = G.player.getPose ? G.player.getPose() : null;
+      ck('checkout.poseRestored',
+        !!poseBefore && !!poseAfter &&
+        Math.abs(poseAfter.x - poseBefore.x) < 0.02 &&
+        Math.abs(poseAfter.z - poseBefore.z) < 0.02,
+        JSON.stringify({ before: poseBefore, after: poseAfter }));
+      ck('checkout.stanceCleared', G.checkout.stance === null, '退出后 stance 应置空');
+
       /* --- 扫码 + 刷卡结算 --- */
       var tx = currentTx();
       var nItems = tx ? tx.items.length : 0;

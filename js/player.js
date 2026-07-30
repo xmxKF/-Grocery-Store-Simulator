@@ -26,6 +26,7 @@
   var lastPromptText = null;
   var stockCooldown = 0;
   var wasBlocked = false;
+  var registerJustExited = false;
 
   var keys = {};
   var eJustPressed = false;
@@ -44,7 +45,10 @@
   G.player = {
     init: init,
     update: update,
-    carrying: null
+    carrying: null,
+    camera: null,
+    getPose: getPose,
+    setPose: setPose
   };
 
   // ---- 初始化 ----
@@ -66,6 +70,23 @@
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
     G.bus.on('screen', onScreenEvent);
+    G.player.camera = camera;
+  }
+
+  /* 位姿快照（纯数值，非引用）。收银台进出时由 checkout 显式保存与还原。 */
+  function getPose() {
+    return { x: pos ? pos.x : 0, z: pos ? pos.z : 0, yaw: yaw, pitch: pitch };
+  }
+
+  function setPose(p) {
+    registerJustExited = true;
+    if (!p || !pos || !camera) return;
+    if (isFinite(p.x)) pos.x = p.x;
+    if (isFinite(p.z)) pos.z = p.z;
+    if (isFinite(p.yaw)) yaw = p.yaw;
+    if (isFinite(p.pitch)) pitch = G.clamp(p.pitch, -MAX_PITCH, MAX_PITCH);
+    camera.position.set(pos.x, EYE_HEIGHT, pos.z);
+    camera.rotation.set(pitch, yaw, 0);
   }
 
   function onScreenEvent(payload) {
@@ -174,11 +195,16 @@
     }
 
     if (wasBlocked) {
-      // 界面/收银模式可能已改动相机朝向，重新同步内部状态，避免视角跳变
-      yaw = camera.rotation.y;
-      pitch = G.clamp(camera.rotation.x, -MAX_PITCH, MAX_PITCH);
-      pos.x = camera.position.x;
-      pos.z = camera.position.z;
+      // 全屏界面不移动相机，但可能改了朝向，仍需同步；
+      // 收银模式的位姿由 checkout.exitRegister() 经 setPose 显式还原，这里不得再从相机反推，
+      // 否则会把站位坐标（柜台背侧）当成玩家位置写回去。
+      if (!registerJustExited) {
+        yaw = camera.rotation.y;
+        pitch = G.clamp(camera.rotation.x, -MAX_PITCH, MAX_PITCH);
+        pos.x = camera.position.x;
+        pos.z = camera.position.z;
+      }
+      registerJustExited = false;
       wasBlocked = false;
     }
 
