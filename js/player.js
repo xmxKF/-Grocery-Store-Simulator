@@ -424,7 +424,7 @@
       // GDD §4：生鲜只能放冷藏柜，其它类目不能放冷藏柜
       if (slot.fridge && prod.cat !== '生鲜') return '冷藏柜仅限生鲜';
       if (!slot.fridge && prod.cat === '生鲜') return '该商品需冷藏';
-      if (slot.productId != null && slot.productId !== carrying.productId) return '此格已被占用';
+      if (slot.productId != null && slot.count > 0 && slot.productId !== carrying.productId) return '此格已被占用';
       if (slot.count >= prod.slotCap) return '此格已放满';
       return '[E] 上架 1 件 · ' + prod.name;
     }
@@ -523,7 +523,7 @@
     if (!slot || !carrying) return;
     var pid = carrying.productId;
     var prod = G.data.productById(pid);
-    if (slot.productId != null && slot.productId !== pid) return; // 此格已被占用
+    if (slot.productId != null && slot.count > 0 && slot.productId !== pid) return; // 此格已被占用
     if (prod && slot.count >= prod.slotCap) return; // 此格已放满
     var ok = G.world.addItem(slot, pid);
     if (ok) {

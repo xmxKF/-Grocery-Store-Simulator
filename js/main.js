@@ -418,6 +418,15 @@
       ck('world.tagStateBack', !!outSlot && outSlot.tagState === 'stocked',
         '补货后 tagState = ' + (outSlot && outSlot.tagState));
 
+      // 缺货格可改放异种商品（Task 4 语义：count===0 时不视为占用）
+      var crossSlot = G.world.findSlotWithProduct('d_water');
+      var crossGuard = 0;
+      while (crossSlot && crossSlot.count > 0 && crossGuard++ < 40) G.world.removeItem(crossSlot);
+      var crossOk = crossSlot ? G.world.addItem(crossSlot, 'f_noodle') : false;
+      ck('world.restockCrossProduct', crossOk === true, '缺货格改放异种商品返回 ' + crossOk);
+      // 还原：撤掉这件方便面，重新放回矿泉水，避免扰动后续断言
+      if (crossOk) { G.world.removeItem(crossSlot); crossSlot.productId = null; crossSlot.count = 0; G.world.addItem(crossSlot, 'd_water'); }
+
       // 改价必须刷新价签贴图（换了 texture 实例即视为已刷新）
       var texBefore = stockedSlot ? stockedSlot.tagMesh.material.map : null;
       G.shop.setPrice('f_noodle', 3.7);
