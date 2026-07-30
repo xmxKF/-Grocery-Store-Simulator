@@ -480,6 +480,15 @@
       var mBefore = G.state.money, xpBefore = G.state.xp;
       var scanned = tx ? G.checkout._test.scanAll() : 0;
       ck('checkout.scan', nItems > 0 && scanned === nItems, '扫码 ' + scanned + ' / ' + nItems + ' 件');
+      /* --- 扫码滑动缓动（Task 6）--- */
+      var easeFn = G.checkout._test && G.checkout._test.ease;
+      ck('checkout.easeExists', typeof easeFn === 'function', '未暴露缓动函数');
+      ck('checkout.easeOut',
+        typeof easeFn === 'function' &&
+        Math.abs(easeFn(0) - 0) < 1e-9 &&
+        Math.abs(easeFn(1) - 1) < 1e-9 &&
+        Math.abs(easeFn(0.5) - 0.875) < 1e-9,
+        typeof easeFn === 'function' ? 'ease(0.5)=' + easeFn(0.5) + '，应为 0.875（1-(1-t)³）' : 'n/a');
       var total = tx ? tx.total : 0;
       if (tx) withRandom(0.1, function () { G.checkout._test.settle(); });
       ck('checkout.settle', !!tx && tx.phase === 'card', '付款方式 ' + (tx && tx.phase));

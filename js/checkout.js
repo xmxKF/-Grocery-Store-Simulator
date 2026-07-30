@@ -253,13 +253,16 @@
     }
   }
 
+  /* DESIGN §6：所有 3D 位移动画统一 ease-out（f(t) = 1 - (1-t)³） */
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
   function stepSlides(dt) {
     if (!tx) return;
     for (var i = 0; i < tx.items.length; i++) {
       var s = tx.items[i].slide;
       if (!s) continue;
       s.t = Math.min(1, s.t + dt / 0.15);
-      tx.items[i].mesh.position.lerpVectors(s.from, s.to, s.t);
+      tx.items[i].mesh.position.lerpVectors(s.from, s.to, easeOutCubic(s.t));
       if (s.t >= 1) tx.items[i].slide = null;
     }
   }
@@ -590,6 +593,7 @@
     },
     /* 自测钩子：仅 main.js 的 ?selftest 脚本化场景调用，正常游戏流程不使用 */
     _test: {
+      ease: easeOutCubic,
       tx: function () { return tx; },
       scanAll: function () {
         if (!tx) return 0;
