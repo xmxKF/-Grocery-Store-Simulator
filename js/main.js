@@ -436,6 +436,8 @@
 
       /* --- 上架飞行动画（Task 5）--- */
       var flySlot = G.world.findSlotWithProduct('f_noodle');
+      // 上架已把该格填满到 slotCap，先腾 2 件容量；下面两次 addItem 正好补回，净库存不变
+      if (flySlot) { G.world.removeItem(flySlot); G.world.removeItem(flySlot); }
       var flyBefore = flySlot ? flySlot.itemGroup.children.length : -1;
       var flyFrom = new THREE.Vector3(flySlot.pos.x + 1.5, 1.2, flySlot.pos.z + 1.5);
       var flyOk = G.world.addItem(flySlot, 'f_noodle', flyFrom);
