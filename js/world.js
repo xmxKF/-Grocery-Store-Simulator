@@ -430,6 +430,42 @@
     }
   }
 
+  /* DESIGN §6：商品自纸箱位置直线飞向目标格位，180ms ease-out。
+     纯视觉，与逻辑解耦——addItem 返回时商品在逻辑上已在格内。自驱 rAF，不接主循环 dt。 */
+  var flights = [];
+  var flightRaf = false;
+
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+  function flyItem(slot, product, fromPos, targetLocal) {
+    if (!sceneRef || typeof requestAnimationFrame !== 'function') return null;
+    var mesh = new THREE.Mesh(itemGeo(), itemMat(product.color));
+    mesh.position.copy(fromPos);
+    sceneRef.add(mesh);
+
+    var to = slot.itemGroup.position.clone().add(targetLocal);
+    var f = { mesh: mesh, from: fromPos.clone(), to: to, t0: Date.now(), slot: slot, onDone: null };
+    flights.push(f);
+    if (!flightRaf) { flightRaf = true; requestAnimationFrame(stepFlights); }
+    return f;
+  }
+
+  function stepFlights() {
+    var now = Date.now();
+    for (var i = flights.length - 1; i >= 0; i--) {
+      var f = flights[i];
+      var k = Math.min(1, (now - f.t0) / 180);
+      f.mesh.position.lerpVectors(f.from, f.to, easeOutCubic(k));
+      if (k >= 1) {
+        if (f.mesh.parent) f.mesh.parent.remove(f.mesh);
+        flights.splice(i, 1);
+        if (f.onDone) f.onDone();
+      }
+    }
+    if (flights.length) requestAnimationFrame(stepFlights);
+    else flightRaf = false;
+  }
+
   /* DESIGN §6：上架成功，商品方块 90ms 内从 0.8 倍缩放到 1.0 倍出现 */
   function popInItem(mesh) {
     if (!mesh || typeof requestAnimationFrame !== 'function') return;
@@ -477,8 +513,23 @@
     if (slot.productId === pid && slot.count >= product.slotCap) return false;
     slot.productId = pid;
     slot.count += 1;
-    updateSlotVisual(slot);
+    var idx = slot.count - 1;
     updateSlotTag(slot);
+
+    if (fromPos && idx < 16) {
+      // 先飞，落位后才让正式方块出现；飞行期间格内少一个方块（180ms，肉眼等价于「正在放上去」）
+      var local = itemLocalPos(idx, slot.faceZ);
+      var f = flyItem(slot, product, fromPos, local);
+      if (f) {
+        f.onDone = function () {
+          updateSlotVisual(slot);
+          if (slot.count > idx && idx < slot.itemGroup.children.length) popInItem(slot.itemGroup.children[idx]);
+        };
+        return true;
+      }
+    }
+
+    updateSlotVisual(slot);
     if (slot.count <= slot.itemGroup.children.length) popInItem(slot.itemGroup.children[slot.count - 1]);
     return true;
   }
@@ -592,6 +643,7 @@
     serializeShelves: serializeShelves,
     restoreShelves: restoreShelves,
     syncLayout: syncLayout,
-    setCashierVisible: setCashierVisible
+    setCashierVisible: setCashierVisible,
+    _flights: flights
   };
 })();

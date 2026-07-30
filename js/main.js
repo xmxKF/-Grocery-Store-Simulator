@@ -434,6 +434,27 @@
         '改价后价签贴图未刷新');
       G.shop.setPrice('f_noodle', 2.2);   // 还原，后续断言依赖 r=1.0 必买
 
+      /* --- 上架飞行动画（Task 5）--- */
+      var flySlot = G.world.findSlotWithProduct('f_noodle');
+      var flyBefore = flySlot ? flySlot.itemGroup.children.length : -1;
+      var flyFrom = new THREE.Vector3(flySlot.pos.x + 1.5, 1.2, flySlot.pos.z + 1.5);
+      var flyOk = G.world.addItem(flySlot, 'f_noodle', flyFrom);
+      ck('world.flightAccepted', flyOk === true, 'addItem 带 fromPos 应正常返回 true');
+      // 飞行期间格内正式方块数暂时比 count 少 1（落位后补齐），故断言「格内 + 飞行中 === count」
+      var flying = (G.world._flights || []).filter(function (f) { return f.slot === flySlot; }).length;
+      ck('world.flightCount', flySlot.itemGroup.children.length + flying === flySlot.count,
+        '格内方块 ' + flySlot.itemGroup.children.length + ' + 飞行中 ' + flying +
+        ' 应等于 count ' + flySlot.count + '（进入前 ' + flyBefore + '）');
+      ck('world.flightNotInGroup',
+        (G.world._flights || []).length === 0 ||
+        G.world._flights.every(function (f) { return f.mesh.parent !== flySlot.itemGroup; }),
+        '飞行中的临时 mesh 不得挂进 itemGroup');
+      // 省略 fromPos 时不应产生飞行（自测与顾客取货都走这条路径）
+      var noFlyBefore = (G.world._flights || []).length;
+      G.world.addItem(flySlot, 'f_noodle');
+      ck('world.flightOptional', (G.world._flights || []).length === noFlyBefore,
+        '不传 fromPos 不应产生飞行');
+
       /* --- 定价到市场价（r=1.0，必买）--- */
       G.shop.setPrice('f_noodle', 2.2);
       G.shop.setPrice('d_water', 1.2);

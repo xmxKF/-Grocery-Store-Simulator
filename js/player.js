@@ -525,7 +525,9 @@
     var prod = G.data.productById(pid);
     if (slot.productId != null && slot.count > 0 && slot.productId !== pid) return; // 此格已被占用
     if (prod && slot.count >= prod.slotCap) return; // 此格已放满
-    var ok = G.world.addItem(slot, pid);
+    // 飞行起点取手持纸箱的世界坐标（syncCarriedBox 每帧更新它）
+    var fromPos = (carrying.mesh && carrying.mesh.position) ? carrying.mesh.position.clone() : null;
+    var ok = G.world.addItem(slot, pid, fromPos);
     if (ok) {
       carrying.itemsLeft -= 1;
       if (G.world.updateBoxVisual) G.world.updateBoxVisual(carrying); // 空箱材质变暗
