@@ -1,0 +1,447 @@
+/* css/style.css — 视觉实现，权威见 DESIGN.md
+   归属：ui agent。CONTRACTS.md §共享 CSS 类名 规定 checkout.js/ui.js 只能用列出的类名建 DOM，
+   因此本文件里“新增”的选择器一律走 ID / 标签 / 属性选择器（不新增 class），
+   已列出的共享类名照单实现。 */
+
+/* ---------------------------------------------------------------
+   §1.1 配色变量
+--------------------------------------------------------------- */
+:root {
+  --panel: #1B2028;
+  --panel-2: #232A34;
+  --line: #2E3742;
+  --text: #E8ECF1;
+  --text-dim: #97A2B0;
+  --accent: #4CC38A;
+  --accent-2: #4C9BE8;
+  --warn: #E8B54C;
+  --danger: #E8574C;
+  --hl: #FFD666;
+  --scrim: rgba(10, 13, 17, .62);
+}
+
+/* ---------------------------------------------------------------
+   基础重置 / §2 排版
+--------------------------------------------------------------- */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
+               "Hiragino Sans GB", "Heiti SC", sans-serif;
+  color: var(--text);
+  font-size: 14px;      /* §2 正文与列表 14px/400 */
+  font-weight: 400;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  font-style: normal;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+#app canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#selftest { display: none; }
+
+/* ---------------------------------------------------------------
+   §3 HUD 布局（固定 DOM id，position: fixed，pointer-events: none）
+--------------------------------------------------------------- */
+#hud-money,
+#hud-day,
+#hud-clock,
+#hud-level,
+#crosshair,
+#prompt,
+#toast {
+  position: fixed;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#hud-money {
+  top: 16px;
+  left: 16px;
+  font-size: 18px;
+  font-weight: 600;
+}
+#hud-money > span {
+  display: inline-block;
+  color: var(--accent);
+}
+#hud-money > div {
+  position: absolute;
+  left: 0;
+  top: 26px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 1;
+  transition: top 800ms ease-out, opacity 800ms ease-out;
+}
+#hud-money > div[data-rise="1"] {
+  top: 2px;
+  opacity: 0;
+}
+@keyframes hudMoneyUp {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+@keyframes hudMoneyDown {
+  0% { color: var(--danger); transform: scale(1); }
+  40% { color: var(--danger); transform: scale(1.15); }
+  100% { color: var(--accent); transform: scale(1); }
+}
+
+#hud-day, #hud-clock {
+  top: 16px;
+  left: 50%;
+  background: rgba(27, 32, 40, .88);
+  padding: 6px 14px;
+  font-size: 14px;
+}
+#hud-day {
+  transform: translateX(-100%);
+  border-radius: 999px 0 0 999px;
+  color: var(--text);
+}
+#hud-clock {
+  transform: translateX(0);
+  border-radius: 0 999px 999px 0;
+  color: var(--text-dim);
+}
+
+#hud-level {
+  top: 16px;
+  right: 16px;
+  text-align: right;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+#hud-level > div {
+  width: 120px;
+  height: 4px;
+  margin: 4px 0 0 auto;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+#hud-level > div > div {
+  height: 100%;
+  width: 0;
+  background: var(--accent-2);
+  border-radius: 2px;
+  transition: width 300ms ease-out;
+}
+
+#crosshair {
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
+  transition: width 120ms ease-out, height 120ms ease-out, background-color 120ms ease-out;
+}
+
+#prompt {
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  display: none;
+  background: rgba(27, 32, 40, .88);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  transition: color 120ms ease-out;
+}
+kbd {
+  background: var(--panel-2);
+  color: var(--hl);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: inherit;
+  font-size: .9em;
+  font-style: normal;
+}
+
+#toast {
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  align-items: flex-end;
+}
+#toast > div {
+  position: relative;
+  width: 260px;
+  background: rgba(27, 32, 40, .94);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+#toast > div[data-show="1"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+#toast > div[data-hide="1"] {
+  opacity: 0;
+  transition: opacity 300ms ease-out;
+}
+
+/* ---------------------------------------------------------------
+   #pos 面板（固定 DOM id；内部 DOM 由 checkout.js 构建，只用下方共享类）
+--------------------------------------------------------------- */
+#pos {
+  display: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 340px;
+  height: 100vh;
+  background: rgba(27, 32, 40, .94);
+  border-left: 1px solid var(--line);
+  padding: 24px;
+  overflow-y: auto;
+  z-index: 15;
+}
+
+/* ---------------------------------------------------------------
+   §4 共享组件类名（CONTRACTS.md §共享 CSS 类名）
+--------------------------------------------------------------- */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--scrim);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease-out;
+}
+.screen[data-open="1"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.panel {
+  background: rgba(27, 32, 40, .94);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .45);
+  padding: 24px;
+  width: 90%;
+  max-width: 880px;
+  max-height: 82vh;
+  overflow-y: auto;
+}
+.panel-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+
+.tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 16px;
+}
+.tab {
+  background: none;
+  border: none;
+  padding: 8px 2px 12px;
+  margin-bottom: -1px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent-2);
+}
+
+.btn {
+  display: inline-block;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 120ms ease-out, transform 120ms ease-out, border-color 120ms ease-out;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #0F1A14;
+}
+.btn-primary:not([disabled]):hover { filter: brightness(1.08); }
+.btn-secondary {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+.btn-secondary:not([disabled]):hover { border-color: var(--accent-2); }
+.btn-danger {
+  background: var(--danger);
+  color: #FFF;
+}
+.btn-danger:not([disabled]):hover { filter: brightness(1.08); }
+.btn:not([disabled]):active { transform: translateY(1px); }
+.btn[disabled] {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 12px;
+  transition: background-color 120ms ease-out;
+}
+.list-row:nth-child(odd) { background: var(--panel-2); }
+.list-row:hover { background: rgba(76, 155, 232, .12); }
+
+.cat-dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+
+.num-input {
+  width: 72px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  text-align: right;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.num-input:focus {
+  outline: none;
+  border-color: var(--accent-2);
+}
+.step-btn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 120ms ease-out;
+}
+.step-btn:not([disabled]):hover { border-color: var(--accent-2); }
+.step-btn[disabled] {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #12161B;
+  white-space: nowrap;
+}
+.badge-ok { background: var(--accent); }
+.badge-warn { background: var(--warn); }
+.badge-danger { background: var(--danger); }
+
+.pos-list {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+.pos-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.pos-total {
+  margin: 12px 0;
+  text-align: right;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--accent);
+  transition: filter 180ms ease-out;
+}
+.cash-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 12px 0;
+}
+.cash-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 120ms ease-out;
+}
+.cash-btn:hover { border-color: var(--accent-2); }
+
+.text-dim { color: var(--text-dim); }
+.text-accent { color: var(--accent); }
+.text-danger { color: var(--danger); }
