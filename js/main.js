@@ -352,6 +352,22 @@
       ck('world.slotShape', slotEntries.length === 24 && G.world.slots.indexOf(slotEntries[0].data.slot) !== -1,
         'shelfSlot 交互体 ' + slotEntries.length + ' 个');
 
+      /* --- 价签与命中盒（Task 3）--- */
+      var tagOk = true, hitOk = true, tagDetail = '';
+      for (var si = 0; si < G.world.slots.length; si++) {
+        var sl = G.world.slots[si];
+        if (!sl.tagMesh || !sl.tagMesh.isMesh) { tagOk = false; tagDetail = sl.id + ' 缺价签'; break; }
+        if (!sl.hitMesh || !sl.hitMesh.isMesh) { hitOk = false; tagDetail = sl.id + ' 缺命中盒'; break; }
+        if (sl.hitMesh.material.opacity !== 0) { hitOk = false; tagDetail = sl.id + ' 命中盒必须 opacity 0'; break; }
+        if (sl.tagMesh.material === sl.hitMesh.material) { tagOk = false; tagDetail = sl.id + ' 价签与命中盒不得共用材质'; break; }
+      }
+      ck('world.slotTagMesh', tagOk, tagDetail || '全部格位均有独立价签');
+      ck('world.slotHitBox', hitOk, tagDetail || '全部格位均有 opacity 0 命中盒');
+      // 价签材质必须逐格独立，否则高亮一个会让同类全亮
+      var tagMatShared = G.world.slots.length > 1 &&
+        G.world.slots[0].tagMesh.material === G.world.slots[1].tagMesh.material;
+      ck('world.slotTagMatUnique', !tagMatShared, '相邻两格价签共用了材质' );
+
       /* --- 上架（world API）--- */
       for (var b = 0; b < boxes.length; b++) {
         var box = boxes[b].data.box;

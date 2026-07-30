@@ -42,6 +42,18 @@
     return new THREE.Vector3((col - 1.5) * 0.14, 0.11, depth * (0.16 + row * 0.16));
   }
 
+  // 价签条：宽同原挡板 0.55，高 0.06，厚 0.04（与层板等厚，见 buildRack 的 board）
+  // 命中盒：占据该格商品应在的那块空气；高 0.46 而非 0.5，给上下两格留 0.04 空隙避免拾取歧义
+  var TAG_GEO = null, HIT_GEO = null;
+  function tagGeo() {
+    if (!TAG_GEO) TAG_GEO = new THREE.BoxGeometry(0.55, 0.06, 0.04);
+    return TAG_GEO;
+  }
+  function hitGeo() {
+    if (!HIT_GEO) HIT_GEO = new THREE.BoxGeometry(0.55, 0.46, 0.5);
+    return HIT_GEO;
+  }
+
   // 货架/冷藏柜格位中心坐标（沿 z=0 中央主过道排布，前方 aisleSpot 均在同一条直线上）
   var SHELF_POSITIONS = [
     { x: -5.0, z: -1.5 }, { x: -2.5, z: -1.5 }, { x: 0.0, z: -1.5 }, { x: 2.5, z: -1.5 }, // Lv1 起 4 组
@@ -284,16 +296,35 @@
       SLOT_LOCAL_X.forEach(function (lx, ci) {
         var id = idPrefix + '_' + rowIdx + '_' + ci;
         var pos = new THREE.Vector3(centerX + lx, y, frontZ);
-        var marker = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.5, 0.05), flatMat(frameColor));
-        marker.position.set(pos.x, pos.y, frontZ - facing * 0.05);
-        sceneRef.add(marker);
+
+        var holder = new THREE.Group();
+
+        // 不可见命中盒：射线靶子。用 opacity 0 而非 visible=false，确保必定可被 raycast 命中。
+        var hit = new THREE.Mesh(hitGeo(), flatMat(0xFFFFFF, {
+          transparent: true, opacity: 0, depthWrite: false
+        }));
+        hit.position.set(pos.x, y + 0.23, frontZ - facing * 0.25);
+        holder.add(hit);
+
+        // 可见价签：贴在该格下方层板（y-0.04）的前缘；同时是准星高亮的载体
+        var tag = new THREE.Mesh(tagGeo(), flatMat(0x8C9AA6));
+        tag.position.set(pos.x, y - 0.055, frontZ + facing * 0.02);
+        holder.add(tag);
+
+        sceneRef.add(holder);
+
         var itemGroup = new THREE.Group();
         itemGroup.position.copy(pos);
         sceneRef.add(itemGroup);
-        var slot = { id: id, pos: pos, productId: null, count: 0, fridge: !!isFridge, marker: marker, itemGroup: itemGroup, aisleSpot: aisleSpot, faceZ: facing };
+
+        var slot = {
+          id: id, pos: pos, productId: null, count: 0, fridge: !!isFridge,
+          marker: holder, tagMesh: tag, hitMesh: hit,
+          itemGroup: itemGroup, aisleSpot: aisleSpot, faceZ: facing
+        };
         groupSlots.push(slot);
         allSlots.push(slot);
-        registerInteractable(marker, { type: 'shelfSlot', data: { slot: slot }, prompt: '' });
+        registerInteractable(holder, { type: 'shelfSlot', data: { slot: slot }, prompt: '' });
       });
     });
 
