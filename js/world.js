@@ -19,6 +19,29 @@
   var SLOT_LOCAL_X = [-0.6, 0, 0.6];
   var SLOT_HEIGHTS = [0.9, 1.4];
 
+  // 格位商品方块：几何体与材质全局共享（每格最多 16 个 × 最多 48 格，绝不逐个 new）
+  var ITEM_GEO = null;
+  var ITEM_MATS = {};
+
+  function itemGeo() {
+    if (!ITEM_GEO) ITEM_GEO = new THREE.BoxGeometry(0.16, 0.22, 0.16);
+    return ITEM_GEO;
+  }
+
+  function itemMat(color) {
+    var k = String(color);
+    if (!ITEM_MATS[k]) ITEM_MATS[k] = flatMat(color);
+    return ITEM_MATS[k];
+  }
+
+  /* 每行 4 个、最多 4 行（DESIGN §5）：列距 0.14 使一格的堆宽 0.58 < 格间距 0.6；
+     行沿格位深度向货架内侧排（层高只有 0.5m，竖着堆会穿过上层隔板） */
+  function itemLocalPos(i, faceZ) {
+    var col = i % 4, row = Math.floor(i / 4);
+    var depth = -(faceZ || 1);
+    return new THREE.Vector3((col - 1.5) * 0.14, 0.11, depth * (0.16 + row * 0.16));
+  }
+
   // 货架/冷藏柜格位中心坐标（沿 z=0 中央主过道排布，前方 aisleSpot 均在同一条直线上）
   var SHELF_POSITIONS = [
     { x: -5.0, z: -1.5 }, { x: -2.5, z: -1.5 }, { x: 0.0, z: -1.5 }, { x: 2.5, z: -1.5 }, // Lv1 起 4 组
@@ -304,26 +327,24 @@
   // 格位可见商品堆
   // ---------------------------------------------------------------
   function updateSlotVisual(slot) {
-    while (slot.itemGroup.children.length) {
-      var c = slot.itemGroup.children.pop();
-      c.geometry.dispose();
-      c.material.dispose();
+    var group = slot.itemGroup;
+    var want = (!slot.productId || slot.count <= 0) ? 0 : Math.min(slot.count, 16);
+
+    // 商品种类变了，整格重来；否则只增删末尾
+    if (slot._visPid !== slot.productId) {
+      while (group.children.length) group.remove(group.children[group.children.length - 1]);
+      slot._visPid = slot.productId;
     }
-    if (!slot.productId || slot.count <= 0) return;
+    while (group.children.length > want) group.remove(group.children[group.children.length - 1]);
+    if (want === 0) return;
+
     var product = G.data.productById(slot.productId);
     if (!product) return;
-    var n = Math.min(slot.count, 16);
-    // 每行 4 个、最多 4 行（DESIGN §5）：列距 0.14 使一格的堆宽 0.58 < 格间距 0.6；
-    // 行沿格位深度向货架内侧排（层高只有 0.5m，竖着堆会穿过上层隔板）
-    var depth = -(slot.faceZ || 1);
-    for (var i = 0; i < n; i++) {
-      var col = i % 4, row = Math.floor(i / 4);
-      var cube = new THREE.Mesh(
-        new THREE.BoxGeometry(0.16, 0.22, 0.16),
-        flatMat(product.color)
-      );
-      cube.position.set((col - 1.5) * 0.14, 0.11, depth * (0.16 + row * 0.16));
-      slot.itemGroup.add(cube);
+    while (group.children.length < want) {
+      var i = group.children.length;
+      var cube = new THREE.Mesh(itemGeo(), itemMat(product.color));
+      cube.position.copy(itemLocalPos(i, slot.faceZ));
+      group.add(cube);
     }
   }
 

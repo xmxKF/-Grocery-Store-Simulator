@@ -367,6 +367,20 @@
         '方便面 ' + G.world.getStockCount('f_noodle') + ' / 矿泉水 ' + G.world.getStockCount('d_water'));
       ck('world.emptyBox', boxes[0].data.box.itemsLeft === 0, '剩余 ' + boxes[0].data.box.itemsLeft);
 
+      /* --- 格位渲染增量化（Task 2）--- */
+      var incSlot = G.world.findSlotWithProduct('f_noodle');
+      var incBefore = incSlot ? incSlot.itemGroup.children.length : -1;
+      var incGeo = (incSlot && incSlot.itemGroup.children[0]) ? incSlot.itemGroup.children[0].geometry : null;
+      if (incSlot) { G.world.removeItem(incSlot); G.world.removeItem(incSlot); }
+      var incAfter = incSlot ? incSlot.itemGroup.children.length : -1;
+      var incGeoSame = !!(incGeo && incSlot && incSlot.itemGroup.children[0] &&
+        incSlot.itemGroup.children[0].geometry === incGeo);
+      if (incSlot) { G.world.addItem(incSlot, 'f_noodle'); G.world.addItem(incSlot, 'f_noodle'); }
+      ck('world.slotIncremental', incBefore > 2 && incAfter === incBefore - 2 &&
+        incSlot.itemGroup.children.length === incBefore,
+        '增删前 ' + incBefore + ' → 删2后 ' + incAfter + ' → 补2后 ' + (incSlot ? incSlot.itemGroup.children.length : -1));
+      ck('world.slotSharedGeo', incGeoSame, '格位商品方块必须复用同一 BoxGeometry 实例');
+
       /* --- 定价到市场价（r=1.0，必买）--- */
       G.shop.setPrice('f_noodle', 2.2);
       G.shop.setPrice('d_water', 1.2);
