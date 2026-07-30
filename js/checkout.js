@@ -470,9 +470,11 @@
     var el = posEl();
     if (el) el.style.display = 'none';
     G.ui.prompt(null);
-
-    if (cashierWasVisible && G.world && G.world.setCashierVisible) G.world.setCashierVisible(true);
-    cashierWasVisible = false;
+    /* 立刻发，不能等 finish()：endDay() 会在 exitRegister() 之后同步 showScreen('summary')，
+       若延后 300ms 再发 {name:null}，会把 player 的 currentScreen 打回 null 而 ui.current 仍是
+       'summary'，两边失联后玩家能用 Tab/Esc 关光全屏界面、phase 却卡在 'summary'。
+       这 300ms 的输入屏蔽仍由 inRegister（此时未放开）经 registerActive 兜住，语义不变。 */
+    G.bus.emit('screen', { name: null });
 
     var restore = savedPose;
     savedPose = null;
@@ -481,7 +483,9 @@
       exiting = false;
       inRegister = false;
       G.checkout.inRegister = false;
-      G.bus.emit('screen', { name: null });
+      // 站桩与站位相机重合：等回程过渡走完再显示，否则相机会从收银员身体里飞出去
+      if (cashierWasVisible && G.world && G.world.setCashierVisible) G.world.setCashierVisible(true);
+      cashierWasVisible = false;
       if (restore && G.player && G.player.setPose) G.player.setPose(restore);
     }
 
@@ -498,6 +502,10 @@
     var cam = camera();
     if (!cam) { if (onDone) onDone(); return; }
     cam.rotation.order = 'YXZ';
+    /* player 的 yaw 是无界累加值（鼠标每转一圈就多 2π），直接标量 lerp 会让 300ms 内甩好几圈。
+       把 toYaw 归一到相对当前朝向的最短弧上；退出腿末尾的 setPose 会把 yaw 精确写回。 */
+    var dy = toYaw - cam.rotation.y;
+    toYaw = cam.rotation.y + Math.atan2(Math.sin(dy), Math.cos(dy));
     tween = {
       fromPos: cam.position.clone(),
       fromYaw: cam.rotation.y, fromPitch: cam.rotation.x,

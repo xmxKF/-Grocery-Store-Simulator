@@ -495,22 +495,25 @@
       ck('checkout.stanceBehind', !!st && st.pos.x < -7.0,
         '站位 x = ' + (st && round2(st.pos.x)) + '，应 < -7.0（柜台背侧）');
 
-      // 看得到就点得到：从站位朝 stance 朝向，传送带上每一件商品都应可被射线命中
+      // 看得到就点得到：从站位朝 stance 朝向，传送带上每一件商品都须在画面内，
+      // 且落在右侧 340px 的 #pos 面板左边——被面板盖住的商品点不到
       var txAim = currentTx();
-      var aimCam = new THREE.PerspectiveCamera(70, 16 / 9, 0.1, 200);
+      var realCam = G.player.camera;
+      var asp = (realCam && realCam.aspect) ? realCam.aspect : 16 / 9;
+      var aimCam = new THREE.PerspectiveCamera(70, asp, 0.1, 200);
       aimCam.position.copy(st.pos);
       aimCam.rotation.order = 'YXZ';
       aimCam.rotation.set(st.pitch, st.yaw, 0);
       aimCam.updateMatrixWorld(true);
-      var frustum = new THREE.Frustum();
-      frustum.setFromProjectionMatrix(
-        new THREE.Matrix4().multiplyMatrices(aimCam.projectionMatrix, aimCam.matrixWorldInverse));
       var visN = 0, totN = txAim ? txAim.items.length : 0;
+      var vw = window.innerWidth || 1280;
       for (var ai = 0; ai < totN; ai++) {
-        if (frustum.containsPoint(txAim.items[ai].mesh.position)) visN++;
+        var pnt = txAim.items[ai].mesh.position.clone().project(aimCam);
+        var pxX = (pnt.x + 1) / 2 * vw;
+        if (pnt.z < 1 && Math.abs(pnt.x) <= 1 && Math.abs(pnt.y) <= 1 && pxX < vw - 340) visN++;
       }
       ck('checkout.stanceFraming', totN > 0 && visN === totN,
-        '传送带 ' + totN + " 件中 " + visN + ' 件在视锥内');
+        '传送带 ' + totN + ' 件中 ' + visN + ' 件在 #pos 面板左侧的可见区内（视口宽 ' + vw + '）');
 
       G.checkout.exitRegister();
       pump(20, function () { return false; });
