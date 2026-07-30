@@ -88,8 +88,8 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 - 圆角只用 `4 / 6 / 8 / 12 / 999px` 五档；间距只用 `4 / 8 / 12 / 16 / 24 / 32px`。
 
 ## 5. 3D 美术方向
-- **几何**：只用 `BoxGeometry` / `CylinderGeometry` / `PlaneGeometry`。r128 **无 `CapsuleGeometry`**，顾客用方块拼。禁止贴图与法线贴图，全部纯色。
-- **材质**：统一 `MeshLambertMaterial`，`flatShading: true`，无金属/粗糙度参数。半透明仅用于冷藏柜玻璃（`transparent, opacity .35`）。
+- **几何**：只用 `BoxGeometry` / `CylinderGeometry` / `PlaneGeometry`。r128 **无 `CapsuleGeometry`**，顾客用方块拼。禁止外部图片素材与法线贴图。允许 `CanvasTexture` 在运行时生成的纯文字 / 标识贴图，仅用于价签一类信息载体；其余表面仍为纯色。此例外不引入任何外部文件，运行时仍为零网络请求。
+- **材质**：统一 `MeshLambertMaterial`，`flatShading: true`，无金属/粗糙度参数。半透明用于冷藏柜玻璃（`transparent, opacity .35`）与货架格命中盒（`transparent, opacity 0`，纯交互用、不可见）。
 - **灯光**（只有两盏，`main.js` 建立）：
   - `AmbientLight(0xFFFFFF, 0.65)`
   - `DirectionalLight(0xFFF6E5, 0.75)`，位置 `(8, 14, 6)`，朝原点。**关闭阴影**（`castShadow = false`）以保证低配帧率。
@@ -102,9 +102,10 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 - **准星命中**（≤3m 的 interactable）：目标 mesh 的 `material.emissive` 设为 `#FFD666`、`emissiveIntensity 0.35`；移开立即还原（缓存原值，禁止克隆材质导致泄漏）。同时 `#crosshair` 变 `--hl`、`#prompt` 显示文案。
 - **提示文案格式**：`[E] 动词 + 对象`，例如 `[E] 搬起纸箱（方便面 ×24）`、`[E] 上架 1 件 · 好味方便面`、`[E] 打开订货电脑`、`[E] 进入收银台`、`[E] 丢弃空箱`。不可用时用 `--danger` 色显示原因，例如 `此格已被占用`、`该商品需冷藏`。
 - **不可用操作**：`#toast` 报错 + `#prompt` 变红，**不弹模态框**。
-- **上架成功**：商品方块以 90ms 从 0.8 倍缩放到 1.0 倍出现。
+- **上架成功**：商品自纸箱位置直线飞向目标格位，180ms `ease-out`；落位后接 90ms 由 0.8 倍缩放到 1.0 倍。
 - **扫码成功**：商品从传送带滑到已扫区（150ms），POS 小计数字闪一次 `--accent`。
 - **金钱变化**：`#hud-money` 旁飘出 `+¥12.5` / `-¥3.0` 小字（`--accent` / `--danger`），上移 24px 并在 800ms 内淡出。
 - **升级**：`#toast` 用 `--accent-2` 状态条，文案 `等级提升！Lv 5 — 解锁：咖啡 / 牛奶 / 洗衣粉`。
+- **所有 3D 位移动画统一使用 `ease-out` 缓动**（`f(t) = 1 - (1-t)³`）。
 - 所有过渡时长只用 `120ms`（UI 状态）、`180ms`（数值闪烁）、`300ms`（面板淡入淡出）三档，缓动统一 `ease-out`。
 - **禁止**：闪烁警示、抖动、超过 300ms 的等待动画、任何遮挡准星的装饰。

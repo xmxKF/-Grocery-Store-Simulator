@@ -64,7 +64,8 @@ G.world.init(scene)               // 建店：地板/墙/门/货架/收银台/�
 G.world.slots                     // [{id, pos:THREE.Vector3, productId|null, count}]
 G.world.findEmptyOrMatchingSlot(pid)      // -> slot|null（上架用）
 G.world.findSlotWithProduct(pid)          // -> slot|null（顾客拿货用）
-G.world.addItem(slot, pid) /*->bool*/  G.world.removeItem(slot) /*->bool*/  // 同步更新货架上的可见商品堆
+G.world.addItem(slot, pid, fromPos /*可选 THREE.Vector3，飞行动画起点；省略则无飞行*/) /*->bool*/  G.world.removeItem(slot) /*->bool*/  // 同步更新货架上的可见商品堆
+G.world.updateSlotTag(slot)   // 幂等；按 slot 当前 productId/count 与 G.state.prices 重绘价签贴图
 G.world.getStockCount(pid)
 G.world.spawnBox(pid)             // 卸货区生成纸箱实体 {mesh, productId, itemsLeft}，注册为可交互
 G.world.registerInteractable(obj3D, {type, data, prompt})   // type: 'box'|'shelfSlot'|'computer'|'register'|'trash'
@@ -79,11 +80,15 @@ G.world.serializeShelves() / G.world.restoreShelves(data)
 ```js
 G.player.init(camera, renderer.domElement); G.player.update(dt)
 G.player.carrying    // null | {mesh, productId, itemsLeft}（举着的纸箱，挂在相机前）
+G.player.camera                 // 只读；init() 时记下的相机引用
+G.player.getPose()              // -> {x, z, yaw, pitch}（纯数值快照，非引用）
+G.player.setPose(pose)          // 设定玩家位姿并立即同步到相机；收银台进出用
 ```
 - 点击 canvas 进入 Pointer Lock；WASD 移动（用 G.world.colliders 做 AABB 碰撞）；`'screen'` 事件打开界面时释放锁并忽略输入。
 - 准星射线 ≤3m 命中 interactable → `G.bus.emit('hover',{prompt})`；未命中发 `{prompt:null}`。
 - 按 E / 左键：box→捡起；持箱对 shelfSlot→放 1 件（调 `G.world.addItem`，箱空自动变垃圾提示）；对 trash→丢弃箱子；computer→`G.ui.showScreen('computer')`；register→`G.checkout.enterRegister()`。
 - Tab 也可开电脑；Esc 关界面/释放锁。
+- `G.checkout.inRegister` 为真时 player 完全让出相机控制权，位姿由 checkout 显式还原（不再由 player 从相机反推）。
 
 ### G.shop（shop.js）
 ```js
@@ -110,6 +115,7 @@ G.checkout.joinQueue(c); G.checkout.queue
 G.checkout.enterRegister()   // 玩家进入收银模式：锁视角朝传送带，POS 面板(#pos)显示
 G.checkout.exitRegister()
 G.checkout.update(dt)
+G.checkout.stance   // null | {pos: THREE.Vector3, yaw: Number, pitch: Number}（只读，供自测断言）
 ```
 - 队首顾客把商品放上传送带（小 mesh 排开）；玩家逐件点击扫码（总价累计显示于 #pos）。
 - 扫完 → 付款：现金（显示顾客给的钞票，玩家从零钱面板点选找零，找错多找的部分损失）或刷卡（点读卡器直接成交）。
@@ -157,6 +163,8 @@ G.clamp(v, a, b)
 - `'cashier'` {hired:boolean}：shop.hireCashier/fireCashier 成功后 emit；main.js 监听并调用 `G.world.setCashierVisible(hired)`，且在新游戏/读档后按 `G.state.cashier` 同步一次。
 - **G.world.setCashierVisible(visible)**：幂等；在收银台后侧放置/移除一个站桩低多边形收银员（体型同顾客规格，制服固定 `#4C9BE8`，不注册交互、不参与碰撞）。
 - 日终判定：main.js 检测 `clock 走完 && G.customers.active.length === 0`。
+- **上架飞行动画由 `world.js` 自行在内部 `requestAnimationFrame` 中驱动**，不接入 `main.js` 主循环的 dt。理由：与现有 `popInItem` 的驱动方式一致；飞行是纯视觉表现，与游戏逻辑解耦——`addItem` 返回时商品在逻辑上已在格内。
+- **价签贴图按 `(productId, price, state)` 三元组缓存 `CanvasTexture` 并复用；但每个价签持有各自的 `Material` 实例**，否则准星高亮会让同商品的所有价签一起发光。
 
 ## 编码纪律
 - 不引入契约之外的跨模块调用；需要新接口时**停下上报**，不擅自加。
