@@ -16,14 +16,14 @@
 | `libs/three.min.js`（vendor 下载） | scaffold |
 | `css/style.css` | ui |
 | `js/data.js`、`js/state.js`、`js/shop.js` | economy |
-| `js/world.js` | world |
+| `js/textures.js`、`js/world.js` | world |
 | `js/player.js` | player |
 | `js/customers.js`、`js/checkout.js` | customers |
 | `js/ui.js` | ui |
 | `js/main.js`、`README.md` | integrator |
 
 `index.html` script 顺序（固定）：
-`libs/three.min.js` → `js/data.js` → `js/state.js` → `js/world.js` → `js/player.js` → `js/shop.js` → `js/customers.js` → `js/checkout.js` → `js/ui.js` → `js/main.js`
+`libs/three.min.js` → `js/data.js` → `js/state.js` → `js/textures.js` → `js/world.js` → `js/player.js` → `js/shop.js` → `js/customers.js` → `js/checkout.js` → `js/ui.js` → `js/main.js`
 
 `index.html` 固定 DOM id（ui/checkout 只能用这些容器）：
 `#app`(canvas 容器) `#hud` `#hud-money` `#hud-day` `#hud-clock` `#hud-level` `#crosshair` `#prompt` `#toast` `#screen-menu` `#screen-computer` `#screen-summary` `#pos` `#selftest`(隐藏 pre)
@@ -43,7 +43,7 @@ G.bus.on(evt, fn); G.bus.off(evt, fn); G.bus.emit(evt, payload /*单个对象*/)
 - `'screen'` {name:string|null} （UI 打开/关闭全屏界面；player 据此暂停指针锁定）
 
 ### G.data（data.js）
-- `G.data.PRODUCTS`: `[{id, name, cat, cost, market, boxSize, slotCap, unlockLevel, color}]`（24 项，数值抄 GDD 表）
+- `G.data.PRODUCTS`: `[{id, name, cat, cost, market, boxSize, slotCap, unlockLevel, color, shape, scale?, accent?}]`（24 项；shape ∈ bottle|can|carton|bag|tub|jug|tray|produce；scale 省略视为 [1,1,1]；accent 省略由 color 派生）
 - `G.data.CONFIG`: `{startMoney, dayLengthSec, rentPerDay, deliverySec, spawnIntervalBase, patienceSec, ...}`（抄 GDD）
 - `G.data.LEVELS`: `[{level, xpNeeded, unlock:string}]`
 - `G.data.productById(id)`
@@ -58,6 +58,17 @@ G.save(); G.load() /*->bool*/; G.resetSave()
 // save() 内部调用 G.world.serializeShelves() / 恢复时调用 G.world.restoreShelves(data)
 ```
 
+### G.tex（textures.js）
+```js
+G.tex.on                    // boolean，加载时读 localStorage['gss-lowfx'] !== '1'
+G.tex.setRenderer(renderer) // main.js 在 buildRenderer 后调用；null 安全（无头环境）
+// 生成器（G.tex.on 为 false 时一律返回 null；返回的 Texture 禁止调用方改 repeat/wrap）：
+G.tex.floorWood(rx, ry)  G.tex.yardConcrete(rx, ry)  G.tex.wallWainscot(rx, ry)
+G.tex.ceilingPanel(rx, ry)  G.tex.shelfMetal(rx, ry)  G.tex.fridgeSteel(rx, ry)
+G.tex.counterLaminate(rx, ry)  G.tex.beltRubber(rx, ry)  G.tex.cardboard(rx, ry)
+G.tex.labelBand(shape, accentHexString)   // 64²，repeat 恒 (1,1)
+```
+
 ### G.world（world.js）
 ```js
 G.world.init(scene)               // 建店：地板/墙/门/货架/收银台/仓储电脑/卸货区/垃圾桶
@@ -66,6 +77,8 @@ G.world.findEmptyOrMatchingSlot(pid)      // -> slot|null（上架用）
 G.world.findSlotWithProduct(pid)          // -> slot|null（顾客拿货用）
 G.world.addItem(slot, pid, fromPos /*可选 THREE.Vector3，飞行动画起点；省略则无飞行*/) /*->bool*/  G.world.removeItem(slot) /*->bool；count 归零保留 productId 以显示缺货*/  // 同步更新货架上的可见商品堆
 G.world.updateSlotTag(slot)   // 幂等；按 slot 当前 productId/count 与 G.state.prices 重绘价签贴图
+G.world.itemGeoFor(pid)   // -> BufferGeometry（品类基础形，T3 前恒为 0.16×0.22×0.16 Box）
+G.world.itemMatFor(pid)   // -> Material（per-pid，T3 起含 labelBand 贴图）
 G.world.getStockCount(pid)
 G.world.spawnBox(pid)             // 卸货区生成纸箱实体 {mesh, productId, itemsLeft}，注册为可交互
 G.world.registerInteractable(obj3D, {type, data, prompt})   // type: 'box'|'shelfSlot'|'computer'|'register'|'trash'
@@ -165,6 +178,10 @@ G.clamp(v, a, b)
 - 日终判定：main.js 检测 `clock 走完 && G.customers.active.length === 0`。
 - **上架飞行动画由 `world.js` 自行在内部 `requestAnimationFrame` 中驱动**，不接入 `main.js` 主循环的 dt。理由：与现有 `popInItem` 的驱动方式一致；飞行是纯视觉表现，与游戏逻辑解耦——`addItem` 返回时商品在逻辑上已在格内。
 - **价签贴图按 `(productId, price, state)` 三元组缓存 `CanvasTexture` 并复用；但每个价签持有各自的 `Material` 实例**，否则准星高亮会让同商品的所有价签一起发光。
+- 商品实例池：world.js 内部按 pid 维护 InstancedMesh（G.world._instPools 仅供自测），
+  增删一律 rebuildProduct(pid) 全量重建；禁用 setColorAt（本构建 shader 无 USE_INSTANCING_COLOR）。
+- `G.customers._test`：自测钩子（spawnOne 等），仅 ?selftest 使用。
+- lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js 与 world.js 通过 G.tex.on 判断。
 
 ## 编码纪律
 - 不引入契约之外的跨模块调用；需要新接口时**停下上报**，不擅自加。
