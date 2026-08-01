@@ -154,7 +154,9 @@
     var product = G.data.productById(pid);
     var psc = product && product.scale;
     var m = new THREE.Mesh(G.world.itemGeoFor(pid), G.world.itemMatFor(pid));
-    m.scale.set(0.8 * (psc ? psc[0] : 1), 0.8 * (psc ? psc[1] : 1), 0.8 * (psc ? psc[2] : 1));
+    var sx = psc ? psc[0] : 1, sy = psc ? psc[1] : 1, sz = psc ? psc[2] : 1;
+    var hh = (c.dims && c.dims.h) ? c.dims.h : 1;
+    m.scale.set(0.8 * sx, 0.8 * sy / hh, 0.8 * sz);
     c.hands.add(m);
     layoutHands(c);
   }

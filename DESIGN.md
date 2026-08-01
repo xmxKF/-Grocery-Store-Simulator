@@ -107,7 +107,7 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 ### 5.4 程序化纹理规范
 新模块 `js/textures.js`（IIFE + `window.G.tex`），script 顺序插在 `state.js` 之后、`world.js` 之前。
 
-`G.tex.on`：模块加载时读一次 `localStorage['gss-lowfx'] !== '1'`。每个生成器在 `!on` 时直接返回 `null`，调用方 `map:null` 天然退化纯色；lowfx 路径与升级前构建逐字节等价。生成器签名统一为 `G.tex.xxx(repeatX, repeatY, ...内容参数)`。`labelBand(shape, accent)` 为唯一例外：repeat 恒 (1,1)，内容参数即缓存键。
+`G.tex.on`：模块加载时读一次 `localStorage['gss-lowfx'] !== '1'`。每个生成器在 `!on` 时直接返回 `null`，调用方 `map:null` 天然退化纯色；lowfx 路径与升级前构建视觉等价（货架材质已合并共享，行为一致）。生成器签名统一为 `G.tex.xxx(repeatX, repeatY, ...内容参数)`。`labelBand(shape, accent)` 为唯一例外：repeat 恒 (1,1)，内容参数即缓存键。
 
 【条款】纹理双层缓存：canvas 按 (生成器, 内容参数) 缓存；CanvasTexture 按 (生成器, 内容参数, repeatX, repeatY) 缓存。调用方严禁改动返回纹理的 repeat/wrapS/wrapT。
 
@@ -141,7 +141,7 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 - `AmbientLight(0xFFFFFF, 0.12)`——保底不死黑
 - `DirectionalLight(0xFFF6E5, 0.85)` @ `(8,14,6)`，`castShadow = true`（唯一投影灯）
 
-阴影参数：世界 AABB x∈[-8.2,11.7]、z∈[-6.2,6.2]、y∈[0,3] → shadow camera：ortho ±13、near 1、far 40；`mapSize 2048²`（≈7.9cm/texel）；`bias -0.0004`、`normalBias 0.03`（flatShading Box 用 normalBias 防痤疮不产生 peter-panning）；`renderer.shadowMap.type = PCFSoftShadowMap`。
+阴影参数：世界 AABB x∈[-8.2,11.9]、z∈[-6.2,6.2]、y∈[0,3] → shadow camera：ortho ±13、near 1、far 40；`mapSize 2048²`（≈1.27cm/texel，26m/2048）；`bias -0.0004`、`normalBias 0.03`（flatShading Box 用 normalBias 防痤疮不产生 peter-panning）；`renderer.shadowMap.type = PCFSoftShadowMap`。
 
 cast / receive 矩阵：
 
@@ -151,35 +151,38 @@ cast / receive 矩阵：
 | 墙 / 天花板 / 门框柱 | ✗ | ✓ | 无窗室内，壳体投影=全店漆黑；headless 自测看不出来，必须先写断言再动灯 |
 | 货架框/层板/背板 | ✓ | ✓ | 层板投在下层，空间感主力 |
 | 价签 / 命中盒 | ✗ | ✗ | |
-| 商品 InstancedMesh | ✗ | ✗ | 0.16m 物体在 7.9cm/texel 下只产生噪点；接触暗部由层板投影免费给 |
+| 商品 InstancedMesh | ✗ | ✗ | 0.16m 商品阴影可解但价值低：省 60+ 深度 draw，接触暗部由层板投影代偿 |
 | 顾客（躯干/头/腿） | ✓ | ✗ | 移动阴影是"活着"的最强信号；发型/臂/鞋不 cast 省一半 |
-| 纸箱/收银台/传送带/电脑/垃圾桶/收银员 | ✓ | ✓ | |
+| 纸箱/收银台/传送带/电脑/垃圾桶 | ✓ | ✓ | |
+| 收银员 | ✓ | ✗ | 站桩体型同顾客规格，cast only（不接，代码与顾客一致） |
 
 【红线】墙与天花板 castShadow 恒为 false（无窗室内，壳体投影 = 全店漆黑，headless 自测无法发现，只能靠断言 shadow.shellNoCast 防守）。
 
 阴影 pass ≈134 个深度 draw，总提交 ≈490，中配预算内。lowfx：`shadowMap.enabled=false` 一个布尔。
 
 ### 5.6 商品表现
-八套共享几何（单件 ≤100 三角；XZ 包络硬上限 0.16m）：
+八套共享几何（单件 ≤112 三角（jug 上限）；XZ 包络 ≤0.165m（断言值；tray 0.175 躺放例外））：
 
 | key | 品类 | 几何 | 尺寸 | 三角 |
 |---|---|---|---|---|
-| `bottle` | 饮料 | Lathe(7点, 8段) | ⌀0.075×0.22 | ~84 |
+| `bottle` | 饮料 | Lathe(7点, 8段) | ⌀0.075×0.22 | 96 |
 | `can` | 饮料 | Cylinder(8) | ⌀0.072×0.13 | 32 |
 | `carton` | 食品/日用 | Box | 0.14×0.20×0.07 | 12 |
 | `bag` | 食品/日用 | Cylinder(6) 收口 | ⌀0.16×0.20 | 24 |
 | `tub` | 日用/罐头 | Cylinder(10) | ⌀0.12×0.16 | 40 |
-| `jug` | 日用 | Lathe(8点带颈, 8段) | ⌀0.09×0.21 | ~96 |
+| `jug` | 日用 | Lathe(8点带颈, 8段) | ⌀0.09×0.21 | 112 |
 | `tray` | 生鲜 | Box | 0.17×0.06×0.12 | 12 |
 | `produce` | 生鲜 | Icosahedron(0) | ⌀0.11 | 20 |
 
-tray 0.17 宽为唯一例外——躺放不与列距冲突（高度仅 0.06）。最坏 900 件全 jug ≈8.6 万三角，一个 draw call 内，零压力。
+tray 0.17 宽为唯一例外——躺放不与列距冲突（高度仅 0.06）。最坏 900 件全 jug ≈10.1 万三角（仍 <12 万闸门），一个 draw call 内，零压力。
 
 数据：`data.js` PRODUCTS 加三列：`shape`（八键之一）、`scale`（可省，默认 [1,1,1]）、`accent`（标签强调色，省略时由 `color` 派生明度 ±20%）。`color` 列已是先例，单一真相源；避免 world.js 再养一张平行映射表。
 
 标签：64² `labelBand(shape, accent)`：一条浅色横带 + 2-3 个深色抽象"字"块，按 (shape, accent) 缓存，挂 per-pid 材质 `map`，由材质 `color` 相乘染色。Cylinder/Lathe 的 u 绕轴、v 沿高，横带天然水平；Box 每面 0..1 同理。
 
 【条款】价签不实例化（每格贴图独立 + 准星高亮载体必须逐格材质）；商品标签不加独立 mesh（labelBand 贴图烘进 per-pid 材质）。
+
+**纸箱**：`0.45³` 立方体，正面贴一块商品类目色的小面片（`0.2×0.12` Plane，前移 0.001）作为「标签」，一眼看出装的是什么。
 
 ### 5.7 顾客构造
 9 部件（几何初始化时 translate 到枢轴，不加 Group）：
@@ -210,7 +213,7 @@ InstancedMesh 商品实例池：按商品 pid 分组，每个上架中的商品�
 - 【禁令】本项目的 three.min.js（r128 构建）shader 不含 USE_INSTANCING_COLOR 分支，`InstancedMesh.setColorAt()` 会静默无效（商品全白且无报错）。实例颜色一律走 per-pid 材质。
 - 【禁令】InstancedMesh 必须 frustumCulled = false（r128 无 computeBoundingSphere，默认视锥剔除按原点包围球计算，会导致整组商品消失）。
 
-draw call 账（Lv10 满级）：items ≤24 / tags 60 / racks 52 / 顾客 14×10=140 / 箱 24 / 收银员 10 / 房间 15 / 传送带商品 ≤12 → ≈357。**总闸门 < 420**。三角预算 < 12 万（900 件全 jug 最坏情形 ≈8.6 万三角）。
+draw call 账（Lv10 满级，理论满员估算）：items ≤24 / tags 60 / racks 52 / 顾客 14×10=140 / 箱 24 / 收银员 10 / 房间 15 / 传送带商品 ≤12 → ≈357。**总闸门 < 420**（自测断言 `perf.drawCallCeiling`，B-T7）。实测：headless 自测在 Lv10 灌满库存的瞬时快照（无在场顾客/纸箱）下 drawable=135，远低于闸门；三角预算 < 12 万（900 件全 jug 最坏情形 ≈10.1 万三角）。
 
 ### 5.9 lowfx
 `localStorage['gss-lowfx']='1'` → `G.tex.on=false`（生成器全返回 null，材质纯色）+ `renderer.shadowMap.enabled=false` + 跳过 castShadow 赋值。逻辑对象、价签状态、命中盒不变——玩法与存档不分叉。切换需刷新页面。
@@ -227,5 +230,5 @@ draw call 账（Lv10 满级）：items ≤24 / tags 60 / racks 52 / 顾客 14×1
 - **金钱变化**：`#hud-money` 旁飘出 `+¥12.5` / `-¥3.0` 小字（`--accent` / `--danger`），上移 24px 并在 800ms 内淡出。
 - **升级**：`#toast` 用 `--accent-2` 状态条，文案 `等级提升！Lv 5 — 解锁：咖啡 / 牛奶 / 洗衣粉`。
 - **所有 3D 位移动画统一使用 `ease-out` 缓动**（`f(t) = 1 - (1-t)³`）。
-- 过渡时长档位：UI 状态 120ms / 3D 位移 150-300ms / 数值闪烁 180ms / 金钱飘字 800ms；缓动统一 `ease-out`。
+- 过渡时长档位：UI 状态 120ms / 3D 位移 90-300ms / 数值闪烁 180ms / 金钱飘字 800ms；缓动统一 `ease-out`。
 - **禁止**：闪烁警示、抖动、超过 300ms 的等待动画、任何遮挡准星的装饰。

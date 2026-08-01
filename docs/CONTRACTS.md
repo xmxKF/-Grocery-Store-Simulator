@@ -45,7 +45,7 @@ G.bus.on(evt, fn); G.bus.off(evt, fn); G.bus.emit(evt, payload /*单个对象*/)
 ### G.data（data.js）
 - `G.data.PRODUCTS`: `[{id, name, cat, cost, market, boxSize, slotCap, unlockLevel, color, shape, scale?, accent?}]`（24 项；shape ∈ bottle|can|carton|bag|tub|jug|tray|produce；scale 省略视为 [1,1,1]；accent 省略由 color 派生）
 - `G.data.CONFIG`: `{startMoney, dayLengthSec, rentPerDay, deliverySec, spawnIntervalBase, patienceSec, ...}`（抄 GDD）
-- `G.data.LEVELS`: `[{level, xpNeeded, unlock:string}]`
+- `G.data.LEVELS`: `[{level, xpNeeded, unlock:string, shelfGroups?, expansion?:boolean, maxBoxesPerOrder?, cashierAvailable?:boolean}]`（可选字段供 world.js/shop.js 判定扩建/收银员解锁）
 - `G.data.productById(id)`
 
 ### G.state（state.js）
@@ -67,6 +67,7 @@ G.tex.floorWood(rx, ry)  G.tex.yardConcrete(rx, ry)  G.tex.wallWainscot(rx, ry)
 G.tex.ceilingPanel(rx, ry)  G.tex.shelfMetal(rx, ry)  G.tex.fridgeSteel(rx, ry)
 G.tex.counterLaminate(rx, ry)  G.tex.beltRubber(rx, ry)  G.tex.cardboard(rx, ry)
 G.tex.labelBand(shape, accentHexString)   // 64²，repeat 恒 (1,1)
+G.tex._cache   // {canvases, textures}，双层缓存内部表，仅供自测
 ```
 
 ### G.world（world.js）
@@ -77,6 +78,7 @@ G.world.findEmptyOrMatchingSlot(pid)      // -> slot|null（上架用）
 G.world.findSlotWithProduct(pid)          // -> slot|null（顾客拿货用）
 G.world.addItem(slot, pid, fromPos /*可选 THREE.Vector3，飞行动画起点；省略则无飞行*/) /*->bool*/  G.world.removeItem(slot) /*->bool；count 归零保留 productId 以显示缺货*/  // 同步更新货架上的可见商品堆
 G.world.updateSlotTag(slot)   // 幂等；按 slot 当前 productId/count 与 G.state.prices 重绘价签贴图
+G.world.updateBoxVisual(box)  // 幂等；按 box.itemsLeft 切换满/空材质色（player.js 举箱变空、main.js 卸货时调用）
 G.world.itemGeoFor(pid)   // -> BufferGeometry（品类基础形，T3 前恒为 0.16×0.22×0.16 Box）
 G.world.itemMatFor(pid)   // -> Material（per-pid，T3 起含 labelBand 贴图）
 G.world.getStockCount(pid)
@@ -115,6 +117,7 @@ G.shop.isUnlocked(pid) /*->bool 等级+许可证*/
 
 ### G.customers（customers.js）
 ```js
+G.customers.init(scene)  // main.js 启动时调用，记下 scene 引用（供 §手持道具/自测取 scene 用）
 G.customers.update(dt); G.customers.active /*[]*/; G.customers.reset()
 ```
 - 营业中按 GDD 频率生成；FSM：`entering→shopping(逐个货架取货)→queueing→paying→leaving`。
@@ -124,11 +127,13 @@ G.customers.update(dt); G.customers.active /*[]*/; G.customers.reset()
 
 ### G.checkout（checkout.js）
 ```js
+G.checkout.init(scene, camera)   // main.js 启动时调用，记下 scene/camera 引用
 G.checkout.joinQueue(c); G.checkout.queue
 G.checkout.enterRegister()   // 玩家进入收银模式：锁视角朝传送带，POS 面板(#pos)显示
 G.checkout.exitRegister()
 G.checkout.update(dt)
 G.checkout.stance   // null | {pos: THREE.Vector3, yaw: Number, pitch: Number}（只读，供自测断言）
+G.checkout._test    // 自测钩子（ease/tx/scanAll/settle/payCard），仅 ?selftest 使用
 ```
 - 队首顾客把商品放上传送带（小 mesh 排开）；玩家逐件点击扫码（总价累计显示于 #pos）。
 - 扫完 → 付款：现金（显示顾客给的钞票，玩家从零钱面板点选找零，找错多找的部分损失）或刷卡（点读卡器直接成交）。
@@ -180,6 +185,7 @@ G.clamp(v, a, b)
 - **价签贴图按 `(productId, price, state)` 三元组缓存 `CanvasTexture` 并复用；但每个价签持有各自的 `Material` 实例**，否则准星高亮会让同商品的所有价签一起发光。
 - 商品实例池：world.js 内部按 pid 维护 InstancedMesh（G.world._instPools 仅供自测），
   增删一律 rebuildProduct(pid) 全量重建；禁用 setColorAt（本构建 shader 无 USE_INSTANCING_COLOR）。
+- 上架飞行动画队列 `G.world._flights`（仅供自测）：`[{mesh, from, to, t0, slot, onDone, pid, idx}]`，`stepFlights` 自驱 rAF 消费。
 - `G.customers._test`：自测钩子（spawnOne 等），仅 ?selftest 使用。
 - lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js 与 world.js 通过 G.tex.on 判断。
 

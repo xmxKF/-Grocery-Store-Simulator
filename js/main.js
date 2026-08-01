@@ -562,6 +562,9 @@
       ck('light.count', lights.amb === 1 && lights.hemi === 1 && lights.dir === 1 && lights.other === 0 &&
         (G.tex.on ? lights.castDir === 1 : lights.castDir === 0),
         JSON.stringify(lights) + ' on=' + G.tex.on);
+      ck('shadow.rendererState', !G.tex.on || !renderer ||
+        (renderer.shadowMap.enabled === true && renderer.shadowMap.type === THREE.PCFSoftShadowMap),
+        'shadowMap enabled=' + (renderer && renderer.shadowMap.enabled) + ' type=' + (renderer && renderer.shadowMap.type));
       var sunRef = null;
       scene.traverse(function (o) { if (!sunRef && o.isDirectionalLight) sunRef = o; });
       var frusOk = true, frusDetail = '';
@@ -648,6 +651,7 @@
           var la = Math.abs(gc.legL.rotation.x);
           if (la > maxAmp) maxAmp = la;
         }
+        /* 上界 0.4451：0.44×amp（amp≤1）的不可达上界 +0.5% 容差；有效防线是下界 0.2 */
         ck('cust.gaitAmp', maxAmp > 0.2 && maxAmp <= 0.4451,
           '腿摆峰值 ' + maxAmp.toFixed(3) + ' rad，应 ∈ (0.2, 0.4451]');
         for (var gt2 = 0; gt2 < 60; gt2++) ct.gait(gc, 1 / 60, false);
@@ -811,6 +815,27 @@
         JSON.stringify({ money: round2(G.state.money), day: G.state.day, xp: G.state.xp, level: G.state.level }));
       ck('save.shelves', G.world.getStockCount('f_noodle') === snap.stock,
         '方便面 ' + G.world.getStockCount('f_noodle') + ' / 预期 ' + snap.stock);
+
+      /* --- 性能总闸门（B-T7）：会脏化 state，必须放在存档往返之后 --- */
+      function countDrawables(node) {
+        if (node.visible === false) return 0;
+        var n = (node.isMesh || node.isInstancedMesh) ? 1 : 0;
+        for (var i = 0; i < node.children.length; i++) n += countDrawables(node.children[i]);
+        return n;
+      }
+      G.state.level = 10;
+      G.state.licenses = ['食品', '饮料', '日用品', '生鲜'];
+      G.world.syncLayout();
+      var fillGuard = 0;
+      for (var fpi = 0; fpi < G.data.PRODUCTS.length; fpi++) {
+        var fp = G.data.PRODUCTS[fpi];
+        var fSlot;
+        while ((fSlot = G.world.findEmptyOrMatchingSlot(fp.id)) && fillGuard++ < 5000) {
+          if (!G.world.addItem(fSlot, fp.id)) break;
+        }
+      }
+      var drawN = countDrawables(scene);
+      ck('perf.drawCallCeiling', drawN < 420, 'Lv10 灌满全店 drawable=' + drawN + '，天花板 420');
 
       /* --- 渲染（无头环境可能没有 WebGL）--- */
       if (renderer) {
