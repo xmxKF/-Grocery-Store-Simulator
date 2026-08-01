@@ -107,7 +107,7 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 ### 5.4 程序化纹理规范
 新模块 `js/textures.js`（IIFE + `window.G.tex`），script 顺序插在 `state.js` 之后、`world.js` 之前。
 
-`G.tex.on`：模块加载时读一次 `localStorage['gss-lowfx'] !== '1'`。每个生成器在 `!on` 时直接返回 `null`，调用方 `map:null` 天然退化纯色；lowfx 路径与升级前构建逐字节等价。生成器签名统一为 `G.tex.xxx(repeatX, repeatY, ...内容参数)`。
+`G.tex.on`：模块加载时读一次 `localStorage['gss-lowfx'] !== '1'`。每个生成器在 `!on` 时直接返回 `null`，调用方 `map:null` 天然退化纯色；lowfx 路径与升级前构建逐字节等价。生成器签名统一为 `G.tex.xxx(repeatX, repeatY, ...内容参数)`。`labelBand(shape, accent)` 为唯一例外：repeat 恒 (1,1)，内容参数即缓存键。
 
 【条款】纹理双层缓存：canvas 按 (生成器, 内容参数) 缓存；CanvasTexture 按 (生成器, 内容参数, repeatX, repeatY) 缓存。调用方严禁改动返回纹理的 repeat/wrapS/wrapT。
 

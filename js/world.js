@@ -321,35 +321,40 @@
   // ---------------------------------------------------------------
   function buildRoom() {
     // 地板
-    var floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF_X * 2, ROOM_HALF_Z * 2), flatMat(0xD8D2C6));
+    var floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF_X * 2, ROOM_HALF_Z * 2),
+      flatMat(G.tex.on ? 0xFFFFFF : 0xD8D2C6, G.tex.on ? { map: G.tex.floorWood(8, 6) } : null));
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(0, 0, 0);
     addMesh(floor);
 
     // 天花板
-    var ceiling = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF_X * 2, ROOM_HALF_Z * 2), flatMat(0xF5F2EC));
+    var ceiling = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF_X * 2, ROOM_HALF_Z * 2),
+      flatMat(G.tex.on ? 0xFFFFFF : 0xF5F2EC, G.tex.on ? { map: G.tex.ceilingPanel(13.3, 10) } : null));
     ceiling.rotation.x = Math.PI / 2;
     ceiling.position.set(0, WALL_H, 0);
     addMesh(ceiling);
 
-    var wallMat = flatMat(0xEFE9DE);
+    // 墙体：wallMat 拆为 per-wall 材质（repeat 不同）
+    var wMatW = flatMat(G.tex.on ? 0xFFFFFF : 0xEFE9DE, G.tex.on ? { map: G.tex.wallWainscot(6.1, 1) } : null);
+    var wMatNS = flatMat(G.tex.on ? 0xFFFFFF : 0xEFE9DE, G.tex.on ? { map: G.tex.wallWainscot(8.1, 1) } : null);
+    var wMatE = flatMat(G.tex.on ? 0xFFFFFF : 0xEFE9DE, G.tex.on ? { map: G.tex.wallWainscot(2.5, 1) } : null);
     // 西墙 x=-8
-    var wWall = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, ROOM_HALF_Z * 2 + WALL_T), wallMat);
+    var wWall = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, ROOM_HALF_Z * 2 + WALL_T), wMatW);
     wWall.position.set(-ROOM_HALF_X, WALL_H / 2, 0);
     addMesh(wWall);
     // 北墙 z=-6
-    var nWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wallMat);
+    var nWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wMatNS);
     nWall.position.set(0, WALL_H / 2, -ROOM_HALF_Z);
     addMesh(nWall);
     // 南墙 z=6
-    var sWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wallMat);
+    var sWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wMatNS);
     sWall.position.set(0, WALL_H / 2, ROOM_HALF_Z);
     addMesh(sWall);
     // 东墙（留门缺口 z∈[-1,1]）
-    var eWallA = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wallMat);
+    var eWallA = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wMatE);
     eWallA.position.set(ROOM_HALF_X, WALL_H / 2, -3.5);
     addMesh(eWallA);
-    var eWallB = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wallMat);
+    var eWallB = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wMatE);
     eWallB.position.set(ROOM_HALF_X, WALL_H / 2, 3.5);
     addMesh(eWallB);
 
@@ -365,7 +370,8 @@
 
     // 卸货区地面
     var yardW = 3.5, yardD = 5;
-    var yard = new THREE.Mesh(new THREE.PlaneGeometry(yardW, yardD), flatMat(0xC7BEAF));
+    var yard = new THREE.Mesh(new THREE.PlaneGeometry(yardW, yardD),
+      flatMat(G.tex.on ? 0xFFFFFF : 0xC7BEAF, G.tex.on ? { map: G.tex.yardConcrete(2, 2.9) } : null));
     yard.rotation.x = -Math.PI / 2;
     yard.position.set(ROOM_HALF_X + yardW / 2, 0.001, 0);
     addMesh(yard);
@@ -401,10 +407,12 @@
   }
 
   function buildCheckout() {
-    var body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 2.0), flatMat(0x6E7A88));
+    var body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 2.0),
+      flatMat(G.tex.on ? 0xFFFFFF : 0x6E7A88, G.tex.on ? { map: G.tex.counterLaminate(1.2, 2) } : null));
     body.position.set(-7.0, 0.5, 0);
     addMesh(body);
-    var belt = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 1.6), flatMat(0x4E5866));
+    var belt = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 1.6),
+      flatMat(0x4E5866, G.tex.on ? { map: G.tex.beltRubber(3, 5) } : null));
     belt.position.set(-7.0, 1.04, 0);
     addMesh(belt);
     colliders.push({ minX: -7.6, maxX: -6.4, minZ: -1.0, maxZ: 1.0 });
@@ -478,20 +486,23 @@
     var backZ = centerZ - facing * (SHELF_D / 2 - 0.025);
 
     var frameColor = 0x8C9AA6;
-    var back = new THREE.Mesh(new THREE.BoxGeometry(SHELF_W, SHELF_H, 0.05), flatMat(frameColor));
+    // 货架框架（buildRack 的 frameColor 材质，back/side/board 共用一份新建材质）
+    var frameMat = flatMat(G.tex.on ? 0xFFFFFF : frameColor,
+      G.tex.on ? { map: (isFridge ? G.tex.fridgeSteel(4, 4) : G.tex.shelfMetal(4, 4)) } : null);
+    var back = new THREE.Mesh(new THREE.BoxGeometry(SHELF_W, SHELF_H, 0.05), frameMat);
     back.position.set(centerX, SHELF_H / 2, backZ);
     group.add(back);
 
     var sideGeo = new THREE.BoxGeometry(0.05, SHELF_H, SHELF_D);
-    var sideL = new THREE.Mesh(sideGeo, flatMat(frameColor));
+    var sideL = new THREE.Mesh(sideGeo, frameMat);
     sideL.position.set(centerX - SHELF_W / 2, SHELF_H / 2, centerZ);
     group.add(sideL);
-    var sideR = new THREE.Mesh(sideGeo.clone(), flatMat(frameColor));
+    var sideR = new THREE.Mesh(sideGeo.clone(), frameMat);
     sideR.position.set(centerX + SHELF_W / 2, SHELF_H / 2, centerZ);
     group.add(sideR);
 
     SLOT_HEIGHTS.forEach(function (y) {
-      var board = new THREE.Mesh(new THREE.BoxGeometry(SHELF_W, 0.04, SHELF_D), flatMat(frameColor));
+      var board = new THREE.Mesh(new THREE.BoxGeometry(SHELF_W, 0.04, SHELF_D), frameMat);
       board.position.set(centerX, y - 0.04, centerZ);
       group.add(board);
     });
@@ -735,7 +746,8 @@
     // 子件用局部坐标（原点=箱心），整箱位置只由 group.position 决定，玩家举箱时才能整体跟随相机
     var group = new THREE.Group();
     group.position.set(slotPos.x, 0.225, slotPos.z);
-    var body = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.45), flatMat(0xC08B4E));
+    var body = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.45),
+      flatMat(0xC08B4E, G.tex.on ? { map: G.tex.cardboard(1, 1) } : null));
     group.add(body);
     var label = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.12), flatMat(CAT_COLORS[product.cat] || 0xFFFFFF));
     label.position.set(-0.226, 0, 0);

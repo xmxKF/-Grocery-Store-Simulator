@@ -55,12 +55,14 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       canvasEl = renderer.domElement;
       app.appendChild(canvasEl);
+      if (G.tex && G.tex.setRenderer) G.tex.setRenderer(renderer);
     } catch (e) {
       // 无头环境可能没有 WebGL：游戏逻辑必须照常运行，只是不渲染
       renderer = null;
       rendererNote = String(e && e.message || e);
       canvasEl = document.createElement('canvas');
       app.appendChild(canvasEl);
+      if (G.tex && G.tex.setRenderer) G.tex.setRenderer(null);
     }
     window.addEventListener('resize', onResize);
   }
@@ -492,6 +494,42 @@
       var geoCount = 0;
       for (var gk in geoSeen) geoCount++;
       ck('world.geoShared', geoCount <= 8, '基础几何 ' + geoCount + ' 套（≤8）');
+
+      /* --- 程序化纹理（B-T4）--- */
+      var GENS = ['floorWood', 'yardConcrete', 'wallWainscot', 'ceilingPanel', 'shelfMetal',
+                  'fridgeSteel', 'counterLaminate', 'beltRubber', 'cardboard'];
+      var genOk = true, genDetail = '';
+      for (var gi = 0; gi < GENS.length; gi++) {
+        var fn = G.tex[GENS[gi]];
+        if (typeof fn !== 'function') { genOk = false; genDetail = GENS[gi] + ' 缺失'; break; }
+        var t = fn.call(G.tex, 2, 2);
+        if (!t || !t.isTexture) { genOk = false; genDetail = GENS[gi] + ' 未返回 Texture'; break; }
+        var w = t.image.width, h = t.image.height;
+        if ((w & (w - 1)) !== 0 || (h & (h - 1)) !== 0) { genOk = false; genDetail = GENS[gi] + ' 非 POT'; break; }
+      }
+      ck('tex.generators', genOk, genDetail || '9 个生成器全部返回 POT CanvasTexture');
+      var lb = G.tex.labelBand('carton', '#F6EBD8');
+      ck('tex.labelBand', !!lb && lb.isTexture && lb.image.width === 64, 'labelBand 64² 纹理');
+      var tA = G.tex.wallWainscot(8.1, 1);
+      var tB = G.tex.wallWainscot(2.5, 1);
+      var tA2 = G.tex.wallWainscot(8.1, 1);
+      ck('tex.cacheStable', tA === tA2, '同 (生成器, repeat) 必须同引用');
+      ck('tex.repeatIsolation',
+        tA !== tB && tA.repeat.x === 8.1 && tB.repeat.x === 2.5 && tA.image === tB.image,
+        '不同 repeat 必须不同实例（A.rx=' + tA.repeat.x + ' B.rx=' + tB.repeat.x + '），且共享底层 canvas');
+      ck('tex.noRendererCrash', (function () {
+        try { G.tex.setRenderer(null); G.tex.floorWood(8, 6); return true; } catch (e) { return false; }
+      })(), 'renderer 为 null 时不得抛异常');
+      var beltFound = false;
+      scene.traverse(function (o) {
+        if (!beltFound && o.isMesh && o.material && o.material.color && o.material.color.getHex() === 0x4E5866) beltFound = true;
+      });
+      ck('tex.beltColorLocked', beltFound, '场景必须仍存在 color=0x4E5866 的传送带 mesh');
+      var onSave = G.tex.on;
+      G.tex.on = false;
+      ck('tex.lowfxNull', G.tex.floorWood(8, 6) === null && G.tex.labelBand('can', '#FFF') === null,
+        'on=false 时生成器必须返回 null');
+      G.tex.on = onSave;
 
       /* --- 上架飞行动画（Task 5）--- */
       var flySlot = G.world.findSlotWithProduct('f_noodle');
