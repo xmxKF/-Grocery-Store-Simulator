@@ -847,7 +847,7 @@
         }
       }
       var drawN = countDrawables(scene);
-      ck('perf.drawCallCeiling', drawN < 520, '满场轮转灌店+满员顾客手持 drawable=' + drawN + '，天花板 520（绝对最坏实测 473 + 10% 余量）');
+      ck('perf.drawCallCeiling', drawN < 550, '满场轮转灌店+满员顾客手持 drawable=' + drawN + '，天花板 550（满场闸门实测 502 + ~10% 余量；含自测前序残留；干净启动满场为 473）');
 
       /* --- 渲染（无头环境可能没有 WebGL）--- */
       if (renderer) {
