@@ -57,7 +57,7 @@
     g.tray = new THREE.BoxGeometry(0.17, 0.06, 0.12);
     g.tray.translate(0, 0.03, 0);
     g.produce = new THREE.IcosahedronGeometry(0.055, 0);
-    g.produce.translate(0, 0.055, 0);
+    g.produce.translate(0, 0.055 * 0.85065, 0);
     BASE_GEOS = g;
     return g;
   }
@@ -596,6 +596,8 @@
     if (!sceneRef || typeof requestAnimationFrame !== 'function') return null;
     var mesh = new THREE.Mesh(itemGeoFor(product.id), itemMatFor(product.id));
     mesh.position.copy(fromPos);
+    var psc = product.scale;
+    if (psc) mesh.scale.set(psc[0], psc[1], psc[2]);
     sceneRef.add(mesh);
 
     var to = slot.itemGroup.position.clone().add(targetLocal);

@@ -137,8 +137,10 @@
   }
 
   function addHandCube(c, pid) {
+    var product = G.data.productById(pid);
+    var psc = product && product.scale;
     var m = new THREE.Mesh(G.world.itemGeoFor(pid), G.world.itemMatFor(pid));
-    m.scale.setScalar(0.8);
+    m.scale.set(0.8 * (psc ? psc[0] : 1), 0.8 * (psc ? psc[1] : 1), 0.8 * (psc ? psc[2] : 1));
     c.hands.add(m);
     layoutHands(c);
   }

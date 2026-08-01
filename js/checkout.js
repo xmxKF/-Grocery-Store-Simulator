@@ -135,14 +135,14 @@
   function beltPos(i) {
     var f = beltFrame();
     var cols = Math.max(3, Math.floor((f.halfSide * 1.3) / 0.18));
-    return new THREE.Vector3(f.origin.x, f.origin.y + 0.02, f.origin.z)
+    return new THREE.Vector3(f.origin.x, f.origin.y + 0.002, f.origin.z)
       .addScaledVector(f.side, -f.halfSide + 0.18 + (i % cols) * 0.18)
       .addScaledVector(f.dir, Math.floor(i / cols) * 0.2);
   }
 
   function scannedPos(k) {
     var f = beltFrame();
-    return new THREE.Vector3(f.origin.x, f.origin.y + 0.02 + k * 0.06, f.origin.z)
+    return new THREE.Vector3(f.origin.x, f.origin.y + 0.002 + k * 0.06, f.origin.z)
       .addScaledVector(f.side, f.halfSide - 0.22)
       .addScaledVector(f.dir, 0.1);
   }
@@ -190,6 +190,8 @@
   function addBeltItem(pid, price) {
     var p = G.data.productById(pid);
     var m = new THREE.Mesh(G.world.itemGeoFor(pid), G.world.itemMatFor(pid));
+    var psc = p.scale;
+    if (psc) m.scale.set(psc[0], psc[1], psc[2]);
     m.position.copy(beltPos(tx.items.length));
     var sc = scene();
     if (sc) sc.add(m);

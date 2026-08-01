@@ -479,14 +479,14 @@
       for (var gpi = 0; gpi < G.data.PRODUCTS.length; gpi++) {
         var gp = G.data.PRODUCTS[gpi];
         var geo = G.world.itemGeoFor(gp.id);
-        geoSeen[gp.shape] = geo;
+        geoSeen[geo.uuid] = 1;
         geo.computeBoundingBox();
         var bb = geo.boundingBox;
         var sx = (gp.scale && gp.scale[0]) || 1, sz = (gp.scale && gp.scale[2]) || 1;
         var w = (bb.max.x - bb.min.x) * sx, d = (bb.max.z - bb.min.z) * sz;
         var cap = (gp.shape === 'tray') ? 0.175 : 0.165;
         if (w > cap || d > cap) { envOk = false; envDetail = gp.id + ' 包络 ' + w.toFixed(3) + '×' + d.toFixed(3); break; }
-        if (bb.min.y < -0.001) { envOk = false; envDetail = gp.id + ' 几何基面必须在 y=0'; break; }
+        if (Math.abs(bb.min.y) > 0.001) { envOk = false; envDetail = gp.id + ' 几何基面必须恰在 y=0'; break; }
       }
       ck('world.geoEnvelope', envOk, envDetail || '全部包络合规且基面落地');
       var geoCount = 0;
