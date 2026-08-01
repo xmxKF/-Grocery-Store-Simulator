@@ -85,12 +85,13 @@
   function findBeltMesh() {
     var sc = scene();
     if (!sc) return null;
-    var found = null;
+    var found = null, colorHit = null;
     sc.traverse(function (o) {
-      if (found || !o.isMesh || !o.material || !o.material.color) return;
-      if (o.material.color.getHex() === 0x4E5866) found = o;
+      if (found || !o.isMesh) return;
+      if (o.userData && o.userData.belt) { found = o; return; }
+      if (!colorHit && o.material && o.material.color && o.material.color.getHex() === 0x4E5866) colorHit = o;
     });
-    return found;
+    return found || colorHit;
   }
 
   /* 传送带坐标系：台面中心 / 朝向（顾客→台面）/ 半宽 */

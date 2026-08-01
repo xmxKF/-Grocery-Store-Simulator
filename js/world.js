@@ -422,6 +422,7 @@
     var belt = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 1.6),
       flatMat(0x4E5866, G.tex.on ? { map: G.tex.beltRubber(3, 5) } : null));
     belt.position.set(-7.0, 1.04, 0);
+    belt.userData.belt = true;
     addMesh(belt, true, true);
     colliders.push({ minX: -7.6, maxX: -6.4, minZ: -1.0, maxZ: 1.0 });
     registerInteractable(body, { type: 'register', data: {}, prompt: '[E] 进入收银台' });

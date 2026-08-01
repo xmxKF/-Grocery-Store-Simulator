@@ -43,7 +43,7 @@ G.bus.on(evt, fn); G.bus.off(evt, fn); G.bus.emit(evt, payload /*单个对象*/)
 - `'screen'` {name:string|null} （UI 打开/关闭全屏界面；player 据此暂停指针锁定）
 
 ### G.data（data.js）
-- `G.data.PRODUCTS`: `[{id, name, cat, cost, market, boxSize, slotCap, unlockLevel, color, shape, scale?, accent?}]`（24 项；shape ∈ bottle|can|carton|bag|tub|jug|tray|produce；scale 省略视为 [1,1,1]；accent 省略由 color 派生）
+- `G.data.PRODUCTS`: `[{id, name, cat, cost, market, boxSize, slotCap, unlockLevel, color, shape, scale?, accent?}]`（24 项；shape ∈ bottle|can|carton|bag|tub|jug|tray|produce；scale 省略视为 [1,1,1]；accent 省略时回退 color，当前 24 商品均显式给值）
 - `G.data.CONFIG`: `{startMoney, dayLengthSec, rentPerDay, deliverySec, spawnIntervalBase, patienceSec, ...}`（抄 GDD）
 - `G.data.LEVELS`: `[{level, xpNeeded, unlock:string, shelfGroups?, expansion?:boolean, maxBoxesPerOrder?, cashierAvailable?:boolean}]`（可选字段供 world.js/shop.js 判定扩建/收银员解锁）
 - `G.data.productById(id)`
@@ -79,7 +79,7 @@ G.world.findSlotWithProduct(pid)          // -> slot|null（顾客拿货用）
 G.world.addItem(slot, pid, fromPos /*可选 THREE.Vector3，飞行动画起点；省略则无飞行*/) /*->bool*/  G.world.removeItem(slot) /*->bool；count 归零保留 productId 以显示缺货*/  // 同步更新货架上的可见商品堆
 G.world.updateSlotTag(slot)   // 幂等；按 slot 当前 productId/count 与 G.state.prices 重绘价签贴图
 G.world.updateBoxVisual(box)  // 幂等；按 box.itemsLeft 切换满/空材质色（player.js 举箱变空、main.js 卸货时调用）
-G.world.itemGeoFor(pid)   // -> BufferGeometry（品类基础形，T3 前恒为 0.16×0.22×0.16 Box）
+G.world.itemGeoFor(pid)   // -> BufferGeometry（品类基础形，T3 前恒为 0.16×0.22×0.16 Box）（契约：所有基础几何基面恰在 y=0，非居中——摆放/飞行/传送带偏移全押在此上）
 G.world.itemMatFor(pid)   // -> Material（per-pid，T3 起含 labelBand 贴图）
 G.world.getStockCount(pid)
 G.world.spawnBox(pid)             // 卸货区生成纸箱实体 {mesh, productId, itemsLeft}，注册为可交互
@@ -184,10 +184,12 @@ G.clamp(v, a, b)
 - **上架飞行动画由 `world.js` 自行在内部 `requestAnimationFrame` 中驱动**，不接入 `main.js` 主循环的 dt。理由：与现有 `popInItem` 的驱动方式一致；飞行是纯视觉表现，与游戏逻辑解耦——`addItem` 返回时商品在逻辑上已在格内。
 - **价签贴图按 `(productId, price, state)` 三元组缓存 `CanvasTexture` 并复用；但每个价签持有各自的 `Material` 实例**，否则准星高亮会让同商品的所有价签一起发光。
 - 商品实例池：world.js 内部按 pid 维护 InstancedMesh（G.world._instPools 仅供自测），
-  增删一律 rebuildProduct(pid) 全量重建；禁用 setColorAt（本构建 shader 无 USE_INSTANCING_COLOR）。
+  增删一律 rebuildProduct(pid) 全量重建；实例颜色一律走 per-pid 材质，不使用 instanceColor/setColorAt——不是能力缺失（本构建支持），而是架构必然：每个商品的 labelBand 贴图不同，材质本就必须 per-pid，instanceColor 只能合并同 (shape,accent) 组、收益不抵复杂度。
 - 上架飞行动画队列 `G.world._flights`（仅供自测）：`[{mesh, from, to, t0, slot, onDone, pid, idx}]`，`stepFlights` 自驱 rAF 消费。
 - `G.customers._test`：自测钩子（spawnOne 等），仅 ?selftest 使用。
-- lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js 与 world.js 通过 G.tex.on 判断。
+- lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js、world.js 与 customers.js 通过 G.tex.on 判断。
+- `belt.userData.belt`：world.js 打标、checkout.findBeltMesh 优先取用（色值 #4E5866 为兜底）——T6 顾客裤装含同色后，色值不再全场景唯一。
+- `userData.shell`：world.js 打标（10 处壳体）、main.js 自测 shellNoCast 断言消费——壳体绝不 castShadow 的硬标记。
 
 ## 编码纪律
 - 不引入契约之外的跨模块调用；需要新接口时**停下上报**，不擅自加。

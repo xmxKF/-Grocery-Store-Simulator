@@ -30,6 +30,7 @@
 单品在类目色系内做明度变化，具体每项 hex 见 `docs/GDD.md` 商品表的 `color` 列。
 
 ### 1.3 3D 世界
+本表为 lowfx 纯色回退值；正常态观感由 §5.4 程序化纹理主色覆盖（如地板木纹 #C9B48E、墙裙 #8C7A62、踢脚 #4E4238、冷藏柜框 #C2CDD4）。
 | 物体 | Hex |
 |---|---|
 | 背景 / 天空（`scene.background`） | `#AECBE0` |
@@ -132,7 +133,7 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 表中 repeat 为该用途的典型值，由调用方传入生成器（如北墙 16.2m 与东墙段 5m 各传各的 `L/2`）。全部 POT + `RepeatWrapping` + 默认 mipmap（WebGL1 合法）。anisotropy 只给 `floorWood`/`yardConcrete`：`Math.min(4, renderer ? renderer.capabilities.getMaxAnisotropy() : 1)`——必须判 `renderer` null（无头环境为 null）。UV 不改：Box 大面 U 沿长度、V 沿高度，`repeat.set(n,1)` 使腔裙板贴底、横向平铺；Plane 同理。生成总耗时预算 < 20ms（一次性，启动时）。
 
 红线：
-- 【红线】传送带材质 .color 恒为 #4E5866（checkout.findBeltMesh 靠色值全场景定位台面）；橡胶纹理做成近灰度靠材质色相乘。
+- 【红线】传送带材质 .color 恒为 #4E5866（checkout.findBeltMesh 靠色值全场景定位台面，自 B 终审起以 `userData.belt` 标记为准，色值为兜底——顾客裤装色板含同色）；橡胶纹理做成近灰度靠材质色相乘。
 - 【红线】纸箱材质保持 color.set() 语义（updateBoxVisual 靠改色切换满/空）；瓦楞纹理近灰度。
 
 ### 5.5 灯光与阴影
@@ -174,9 +175,9 @@ cast / receive 矩阵：
 | `tray` | 生鲜 | Box | 0.17×0.06×0.12 | 12 |
 | `produce` | 生鲜 | Icosahedron(0) | ⌀0.11 | 20 |
 
-tray 0.17 宽为唯一例外——躺放不与列距冲突（高度仅 0.06）。最坏 900 件全 jug ≈10.1 万三角（仍 <12 万闸门），一个 draw call 内，零压力。
+tray 0.17 宽为唯一例外——躺放不与列距冲突（高度仅 0.06）。三角量为解析预算（900×112≈10.1 万），无独立断言；实例分组由 world.js 内部共享几何缓存（baseGeos()/BASE_GEOS，≤8 套）守护，一个 draw call 内，零压力。
 
-数据：`data.js` PRODUCTS 加三列：`shape`（八键之一）、`scale`（可省，默认 [1,1,1]）、`accent`（标签强调色，省略时由 `color` 派生明度 ±20%）。`color` 列已是先例，单一真相源；避免 world.js 再养一张平行映射表。
+数据：`data.js` PRODUCTS 加三列：`shape`（八键之一）、`scale`（可省，默认 [1,1,1]）、`accent`（标签强调色，省略时回退 color，当前 24 商品均显式给值）。`color` 列已是先例，单一真相源；避免 world.js 再养一张平行映射表。
 
 标签：64² `labelBand(shape, accent)`：一条浅色横带 + 2-3 个深色抽象"字"块，按 (shape, accent) 缓存，挂 per-pid 材质 `map`，由材质 `color` 相乘染色。Cylinder/Lathe 的 u 绕轴、v 沿高，横带天然水平；Box 每面 0..1 同理。
 
@@ -196,7 +197,7 @@ tray 0.17 宽为唯一例外——躺放不与列距冲突（高度仅 0.06）�
 | 头 | Box | 0.26³ | 1.53 | skin |
 | 发型 | 4 款共享几何（短块/后长/平顶/蓬顶） | ~0.29×0.11×0.29 | 1.70 | hair |
 
-随机：身高 h∈[0.90,1.08]（group.scale.y）；胖瘦 w∈[0.88,1.22] 只作用躯干（scale x/z）+ 腿距 ±0.115w。存 `c.dims={h,w}`。头顶（含发型）y ∈ [1.56, 1.91]（h∈[0.90,1.08]）。
+随机：身高 h∈[0.90,1.08]（group.scale.y）；胖瘦 w∈[0.88,1.22] 只作用躯干（scale.set(w, 1, w×0.9)——z 向 0.9 收窄防止过厚）+ 腿距 ±0.115w。存 `c.dims={h,w}`。头顶（含发型）y ∈ [1.56, 1.91]（h∈[0.90,1.08]）。
 
 色板见 §1.3「顾客裤装色板」「顾客肤色色板」「顾客发色色板」「顾客鞋色」；衣色沿用现有 8 色「顾客随机色板」。材质走模块级缓存，总数 ≤22。
 
@@ -205,19 +206,19 @@ tray 0.17 宽为唯一例外——躺放不与列距冲突（高度仅 0.06）�
 - 腿 `sin(phase)×0.44`（±25.2°）反相；臂 `−sin(phase)×0.30` 反相；鞋随腿。
 - 浮沉：躯干/头/发 各自 baseY − `0.03×|sin(phase)|×amp`（下沉式，物理正确相位）。**根节点 y 恒 0**——浮沉只动部件，导航/队列判定/未来物理不受扰动。
 - 静止：角度按 `k=min(1,dt×8)` 衰减归零，禁止冻在半步。
-- 结构约束（为未来物理预留、不写代码）：步态集中在 `applyGait`（未来 `if (c.ragdoll) return;` 一行）；不缓存世界矩阵；`c.dims` 可推 AABB。不加 `motionMode`/`velocity` 等专用字段。
+- 结构约束：物理接管钩子已预留（`applyGait` 开头 `if (c.ragdoll) return;`；`c.ragdoll` 目前无写入点）；不缓存世界矩阵；`c.dims` 可推 AABB。不加 `motionMode`/`velocity` 等专用字段。
 
 ### 5.8 性能契约
 InstancedMesh 商品实例池：按商品 pid 分组，每个上架中的商品一个 `InstancedMesh(baseGeo[shape], matForProduct(pid), capacity)`，全店 ≤24 个，惰性创建；容量 64 起，溢出 ×2 重建换入；`instanceMatrix.setUsage(THREE.DynamicDrawUsage)`；`mesh.count` 只画有效数；每格最多渲染 `min(count,16)` 件。
 
-- 【禁令】本项目的 three.min.js（r128 构建）shader 不含 USE_INSTANCING_COLOR 分支，`InstancedMesh.setColorAt()` 会静默无效（商品全白且无报错）。实例颜色一律走 per-pid 材质。
+- 【禁令】实例颜色一律走 per-pid 材质，不使用 instanceColor/setColorAt——不是能力缺失（本构建支持），而是架构必然：每个商品的 labelBand 贴图不同，材质本就必须 per-pid，instanceColor 只能合并同 (shape,accent) 组、收益不抵复杂度。
 - 【禁令】InstancedMesh 必须 frustumCulled = false（r128 无 computeBoundingSphere，默认视锥剔除按原点包围球计算，会导致整组商品消失）。
 
-draw call 账（Lv10 满级，干净启动的绝对最坏负载）：items ≤24 / tags 60 / racks 52 / 房间与设施 15 / 收银员 4 / 纸箱 ≤48 / 顾客部件 14×9=126 / 顾客手持 ≤168 → 合计上限 ≈473。**总闸门 < 550**（满场闸门实测 502 + ~10% 余量；含自测前序残留；干净启动满场为 473，自测断言 `perf.drawCallCeiling`，B-T7）。
+draw call 账（Lv10 满级，干净启动的绝对最坏负载）：items ≤24 / tags 60 / racks 52 / 房间与设施 15 / 收银员 4 / 纸箱 ≤48 / 顾客部件 14×9=126 / 顾客手持 ≤168 → 合计上限 ≈497。**总闸门 < 550**（满场闸门实测 502 + ~10% 余量；含自测前序残留；干净启动满场为 497，自测断言 `perf.drawCallCeiling`，B-T7）。
 
-天花板口径说明：闸门以**自测脚本实际运行到该断言时的场景状态**为准（此前的购物/结账等测试步骤可能残留少量对象未被完全清理），而非理论上「刚启动、只有轮转灌店负载」的 473——两者有出入是预期内的，闸门按前者（更高、更保守）定标。爆炸性回归（例如实例化失效导致每件商品各建一个 mesh，致 960+ 网格）仍远超此线，闸门依旧能拦截。
+天花板口径说明：闸门以**自测脚本实际运行到该断言时的场景状态**为准（此前的购物/结账等测试步骤可能残留少量对象未被完全清理），而非理论上「刚启动、只有轮转灌店负载」的 497——两者有出入是预期内的，闸门按前者（更高、更保守）定标。爆炸性回归（例如实例化失效导致每件商品各建一个 mesh，致 960+ 网格）仍远超此线，闸门依旧能拦截。
 
-自测负载生成方式：**轮转灌店**（外层轮次、内层逐商品各占一格再换下一商品）逼出 ≤24 组实例池上限——若按商品顺序灌店，先到的商品会占满所有匹配格位，实际只会建出 2 组池，测不出真实上限；轮转版本 + 卸货区堆满 24 箱 + 满场 14 名顾客各持 12 件手持商品，才是这套自测能构造出的绝对最坏负载。实测 headless 自测 drawable=502，低于闸门 550；三角预算 < 12 万（900 件全 jug 最坏情形 ≈10.1 万三角）。
+自测负载生成方式：**轮转灌店**（外层轮次、内层逐商品各占一格再换下一商品）逼出 ≤24 组实例池上限——若按商品顺序灌店，先到的商品会占满所有匹配格位，实际只会建出 2 组池，测不出真实上限；轮转版本 + 卸货区堆满 24 箱 + 满场 14 名顾客各持 12 件手持商品，才是这套自测能构造出的绝对最坏负载。实测 headless 自测 drawable=502，低于闸门 550；三角量为解析预算（900×112≈10.1 万），无独立断言；实例分组由 world.js 内部共享几何缓存（baseGeos()/BASE_GEOS，≤8 套）守护。
 
 ### 5.9 lowfx
 `localStorage['gss-lowfx']='1'` → `G.tex.on=false`（生成器全返回 null，材质纯色）+ `renderer.shadowMap.enabled=false` + 跳过 castShadow 赋值。逻辑对象、价签状态、命中盒不变——玩法与存档不分叉。切换需刷新页面。
