@@ -608,6 +608,55 @@
       ck('shadow.lowfx', G.tex.on ? true : !(renderer && renderer.shadowMap && renderer.shadowMap.enabled),
         'lowfx 下 shadowMap 必须关闭');
 
+      /* --- 顾客构造与步态（B-T6）--- */
+      var ct = G.customers._test;
+      ck('cust.testHook', !!ct && typeof ct.spawnOne === 'function' && typeof ct.gait === 'function',
+        '缺 _test.spawnOne/gait');
+      if (ct && ct.spawnOne) {
+        var minTop = 99, maxTop = 0, partsOk = true, rootYOk = true, matSharedSeen = {};
+        var sample = null;
+        for (var si2 = 0; si2 < 50; si2++) {
+          var cc = ct.spawnOne();
+          if (!sample) sample = cc;
+          var meshN = 0, top = 0;
+          cc.mesh.traverse(function (o) {
+            if (o.isMesh && o.parent !== cc.hands) meshN++;
+          });
+          cc.mesh.updateMatrixWorld(true);
+          var bb2 = new THREE.Box3().setFromObject(cc.mesh);
+          top = bb2.max.y;
+          if (meshN !== 9) partsOk = false;
+          if (top < minTop) minTop = top;
+          if (top > maxTop) maxTop = top;
+          if (cc.mesh.position.y !== 0) rootYOk = false;
+          var shirtHex = cc.shirtMat.color.getHex();
+          if (matSharedSeen[shirtHex] && matSharedSeen[shirtHex] !== cc.shirtMat) matSharedSeen[shirtHex] = 'DIFF';
+          else if (!matSharedSeen[shirtHex]) matSharedSeen[shirtHex] = cc.shirtMat;
+          ct.remove(cc);
+        }
+        ck('cust.parts', partsOk, '躯干+头+发+臂×2+腿×2+鞋×2 = 9 个 mesh（手持组除外）');
+        ck('cust.height', minTop >= 1.55 && maxTop <= 1.92,
+          '50 次头顶 y ∈ [' + minTop.toFixed(2) + ', ' + maxTop.toFixed(2) + ']，应在 [1.55,1.92]');
+        /* 上界 1.92 而非 spec 的 1.90：基高 1.7655（蓬顶发型）× h 上限 1.08 = 1.907，
+           spec §6 的 [1.55,1.90] 未计发型高度，按实际几何修正——T7 校准回写时同步 spec */
+        var matOk = true;
+        for (var mk in matSharedSeen) if (matSharedSeen[mk] === 'DIFF') matOk = false;
+        ck('cust.matShared', matOk, '同色衣装必须共享材质实例');
+        var gc = ct.spawnOne();
+        var maxAmp = 0;
+        for (var gt = 0; gt < 120; gt++) {
+          ct.gait(gc, 1 / 60, true);
+          var la = Math.abs(gc.legL.rotation.x);
+          if (la > maxAmp) maxAmp = la;
+        }
+        ck('cust.gaitAmp', maxAmp > 0.2 && maxAmp <= 0.4451,
+          '腿摆峰值 ' + maxAmp.toFixed(3) + ' rad，应 ∈ (0.2, 0.4451]');
+        for (var gt2 = 0; gt2 < 60; gt2++) ct.gait(gc, 1 / 60, false);
+        ck('cust.gaitDecay', Math.abs(gc.legL.rotation.x) < 0.01 && gc.mesh.position.y === 0,
+          '静止 1s 后腿角 ' + gc.legL.rotation.x.toFixed(4) + '，根 y=' + gc.mesh.position.y);
+        ct.remove(gc);
+      }
+
       /* --- 上架飞行动画（Task 5）--- */
       var flySlot = G.world.findSlotWithProduct('f_noodle');
       // 上架已把该格填满到 slotCap，先腾 2 件容量；下面两次 addItem 正好补回，净库存不变

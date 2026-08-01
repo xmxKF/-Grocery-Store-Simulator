@@ -5,15 +5,30 @@
 
   var G = (window.G = window.G || {});
 
-  /* DESIGN §1.3 顾客随机色板 */
-  var PALETTE = ['#E8574C', '#4C9BE8', '#4CC38A', '#E8B54C', '#9B6FE0', '#E88AB0', '#F0F0F0', '#5A6B7A'];
+  /* DESIGN §1.3 顾客四张色板；§5.7 顾客构造 */
+  var SHIRTS = ['#E8574C', '#4C9BE8', '#4CC38A', '#E8B54C', '#9B6FE0', '#E88AB0', '#F0F0F0', '#5A6B7A'];
+  var PANTS = ['#3A424C', '#4E5866', '#5A6B7A', '#6E5A48', '#2E3742'];
+  var SKINS = ['#F0C9A0', '#D9A878', '#C08B4E', '#8A5A3B'];
+  var HAIRS = ['#2A2118', '#4A3524', '#6E5A48', '#A8A29A'];
+  var SHOE_HEX = '#2E3742';
 
-  /* GDD §6 体型：Box 身体 0.45×1.0×0.3 + Box 头 0.28³ + 两条 Box 腿。
-     几何体与材质是模块级共享单例：顾客销毁时只移出场景，不 dispose（共享资源，dispose 会破坏其它顾客）。 */
-  var TORSO_GEO = new THREE.BoxGeometry(0.45, 1.0, 0.3);
-  var HEAD_GEO = new THREE.BoxGeometry(0.28, 0.28, 0.28);
-  var LEG_GEO = new THREE.BoxGeometry(0.14, 0.55, 0.16);
+  /* 几何体与材质是模块级共享单例：顾客销毁时只移出场景，不 dispose（共享资源，dispose 会破坏其它顾客）。 */
+  var TORSO_GEO = new THREE.BoxGeometry(0.44, 0.68, 0.26);
+  TORSO_GEO.translate(0, 0.34, 0);                      // 基点在髋部上沿
+  var HEAD_GEO = new THREE.BoxGeometry(0.26, 0.26, 0.26);
+  var LEG_GEO = new THREE.BoxGeometry(0.15, 0.64, 0.17);
+  LEG_GEO.translate(0, -0.32, 0);                       // 枢轴在髋
+  var ARM_GEO = new THREE.BoxGeometry(0.11, 0.58, 0.13);
+  ARM_GEO.translate(0, -0.29, 0);                       // 枢轴在肩
+  var SHOE_GEO = new THREE.BoxGeometry(0.16, 0.08, 0.22);
+  var HAIR_GEOS = [
+    new THREE.BoxGeometry(0.29, 0.11, 0.29),                       // 短块
+    new THREE.BoxGeometry(0.29, 0.09, 0.34),                       // 后长
+    new THREE.BoxGeometry(0.31, 0.07, 0.31),                       // 平顶
+    new THREE.BoxGeometry(0.33, 0.13, 0.24)                        // 蓬顶
+  ];
   var bodyMats = {};
+  var itemMats = {};
 
   var active = [];
   var spawnTimer = null;
@@ -145,19 +160,66 @@
     layoutHands(c);
   }
 
+  /* GDD §6 / DESIGN §5.7 体型：9 部件（躯干/头/发/臂×2/腿×2/鞋×2），随机胖瘦高矮 + 四色板。
+     几何体与材质是模块级共享单例：顾客销毁时只移出场景，不 dispose（共享资源，dispose 会破坏其它顾客）。 */
+  function buildBody() {
+    var shirtMat = matFor(bodyMats, SHIRTS[G.randInt(0, SHIRTS.length - 1)]);
+    var pantsMat = matFor(bodyMats, PANTS[G.randInt(0, PANTS.length - 1)]);
+    var skinMat = matFor(bodyMats, SKINS[G.randInt(0, SKINS.length - 1)]);
+    var hairMat = matFor(bodyMats, HAIRS[G.randInt(0, HAIRS.length - 1)]);
+    var shoeMat = matFor(bodyMats, SHOE_HEX);
+
+    var g = new THREE.Group();
+    var h = G.rand(0.90, 1.08);
+    var w = G.rand(0.88, 1.22);
+
+    var torso = new THREE.Mesh(TORSO_GEO, shirtMat);
+    torso.position.y = 0.72;
+    torso.scale.set(w, 1, w * 0.9);
+    var head = new THREE.Mesh(HEAD_GEO, skinMat);
+    head.position.y = 1.53;
+    var hair = new THREE.Mesh(HAIR_GEOS[G.randInt(0, HAIR_GEOS.length - 1)], hairMat);
+    hair.position.y = 1.70;
+    var legL = new THREE.Mesh(LEG_GEO, pantsMat);
+    legL.position.set(-0.115 * w, 0.72, 0);
+    var legR = new THREE.Mesh(LEG_GEO, pantsMat);
+    legR.position.set(0.115 * w, 0.72, 0);
+    var shoeL = new THREE.Mesh(SHOE_GEO, shoeMat);
+    shoeL.position.set(0, -0.66, 0.02);
+    legL.add(shoeL);
+    var shoeR = new THREE.Mesh(SHOE_GEO, shoeMat);
+    shoeR.position.set(0, -0.66, 0.02);
+    legR.add(shoeR);
+    var armL = new THREE.Mesh(ARM_GEO, shirtMat);
+    armL.position.set(-(0.22 * w + 0.07), 1.34, 0);
+    var armR = new THREE.Mesh(ARM_GEO, shirtMat);
+    armR.position.set(0.22 * w + 0.07, 1.34, 0);
+
+    var hands = new THREE.Group();
+    g.add(torso); g.add(head); g.add(hair); g.add(legL); g.add(legR);
+    g.add(armL); g.add(armR); g.add(hands);
+    g.scale.y = h;
+    if (G.tex && G.tex.on) {
+      torso.castShadow = true; head.castShadow = true;
+      legL.castShadow = true; legR.castShadow = true;
+    }
+    return {
+      group: g, hands: hands, shirtMat: shirtMat,
+      torso: torso, head: head, hair: hair,
+      legL: legL, legR: legR, armL: armL, armR: armR,
+      dims: { h: h, w: w },
+      baseY: { torso: 0.72, head: 1.53, hair: 1.70 }
+    };
+  }
+
   function spawn() {
     var sc = scene();
     var nav = G.world.nav;
     if (!sc || !nav || !nav.entry) return;
 
-    var mat = matFor(bodyMats, PALETTE[G.randInt(0, PALETTE.length - 1)]);
-    var g = new THREE.Group();
-    var torso = new THREE.Mesh(TORSO_GEO, mat); torso.position.y = 1.05;
-    var head = new THREE.Mesh(HEAD_GEO, mat); head.position.y = 1.69;
-    var legL = new THREE.Mesh(LEG_GEO, mat); legL.position.set(-0.11, 0.275, 0);
-    var legR = new THREE.Mesh(LEG_GEO, mat); legR.position.set(0.11, 0.275, 0);
-    var hands = new THREE.Group();
-    g.add(torso); g.add(head); g.add(legL); g.add(legR); g.add(hands);
+    var body = buildBody();
+    var g = body.group;
+    var hands = body.hands;
     g.position.set(nav.entry.x, 0, nav.entry.z);
     sc.add(g);
 
@@ -179,6 +241,18 @@
       queueTarget: null,
       removed: false,
       despawn: -1,
+      phase: 0,
+      amp: 0,
+      legL: body.legL,
+      legR: body.legR,
+      armL: body.armL,
+      armR: body.armR,
+      torso: body.torso,
+      head: body.head,
+      hair: body.hair,
+      baseY: body.baseY,
+      shirtMat: body.shirtMat,
+      dims: body.dims,
       moveTo: function (v) { this.path = [new THREE.Vector3(v.x, 0, v.z)]; },
       atDestination: function () { return this.path.length === 0; },
       popItem: popItem,
@@ -212,6 +286,25 @@
       c.mesh.rotation.y = Math.atan2(dx, dz);
     }
     p.y = 0;
+  }
+
+  /* 步态唯一写入点（DESIGN §5.7）：根节点 y 恒 0，浮沉只动上身部件；
+     未来物理接管时在此函数开头加 if (c.ragdoll) return; 即可 */
+  function applyGait(c, dt, moving) {
+    if (c.ragdoll) return;
+    var target = moving ? 1 : 0;
+    var k = Math.min(1, dt * 8);
+    c.amp += (target - c.amp) * k;
+    if (moving) c.phase += dt * num(cfg().customerSpeed, 1.6) * 3.4;
+    var s = Math.sin(c.phase) * c.amp;
+    c.legL.rotation.x = s * 0.44;
+    c.legR.rotation.x = -s * 0.44;
+    c.armL.rotation.x = -s * 0.30;
+    c.armR.rotation.x = s * 0.30;
+    var bob = 0.03 * Math.abs(Math.sin(c.phase)) * c.amp;
+    c.torso.position.y = c.baseY.torso + bob;
+    c.head.position.y = c.baseY.head + bob;
+    c.hair.position.y = c.baseY.hair + bob;
   }
 
   /* ---------- 购物 ---------- */
@@ -369,7 +462,9 @@
 
     for (var i = active.length - 1; i >= 0; i--) {
       var c = active[i];
+      var hadPath = c.path.length > 0;
       stepMove(c, dt);
+      applyGait(c, dt, hadPath);
       stepState(c, dt);
       if (c.removed) active.splice(i, 1);
     }
@@ -388,6 +483,20 @@
     update: update,
     active: active,
     reset: reset,
-    init: function (sc) { if (sc && sc.isScene) sceneRef = sc; }
+    init: function (sc) { if (sc && sc.isScene) sceneRef = sc; },
+    _test: {
+      spawnOne: function () {
+        var body = buildBody();
+        var sc2 = scene();
+        if (sc2) sc2.add(body.group);
+        var c = { mesh: body.group, hands: body.hands, phase: 0, amp: 0,
+          legL: body.legL, legR: body.legR, armL: body.armL, armR: body.armR,
+          torso: body.torso, head: body.head, hair: body.hair,
+          baseY: body.baseY, shirtMat: body.shirtMat, dims: body.dims };
+        return c;
+      },
+      gait: function (c, dt, moving) { applyGait(c, dt, moving); },
+      remove: function (c) { if (c.mesh.parent) c.mesh.parent.remove(c.mesh); }
+    }
   };
 })();
