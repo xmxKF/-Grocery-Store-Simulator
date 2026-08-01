@@ -34,6 +34,122 @@
     return ITEM_MATS[k];
   }
 
+  // ---- 商品实例池（B-T2）：按 pid 一组 InstancedMesh，增删走全量重建，无索引簿记 ----
+  var instPools = {};          // pid -> { mesh: InstancedMesh, cap: number }
+  var instPops = [];           // { pid, at: number(实例下标), t0 } 落位弹入动画
+  var instPopRaf = false;
+  var _m4 = new THREE.Matrix4();
+  var _q = new THREE.Quaternion();
+  var _vp = new THREE.Vector3();
+  var _vs = new THREE.Vector3(1, 1, 1);
+
+  function itemGeoFor(pid) { return itemGeo(); }          // T3 起按 shape 分派
+  function itemMatFor(pid) {
+    var product = G.data.productById(pid);
+    return itemMat(product ? product.color : 0xFFFFFF);   // T3 起 per-pid 含标签贴图
+  }
+
+  function ensurePool(pid, need) {
+    var pool = instPools[pid];
+    if (pool && pool.cap >= need) return pool;
+    var cap = pool ? pool.cap : 64;
+    while (cap < need) cap *= 2;
+    var mesh = new THREE.InstancedMesh(itemGeoFor(pid), itemMatFor(pid), cap);
+    mesh.count = 0;
+    mesh.frustumCulled = false;                 // r128 无 computeBoundingSphere，必关
+    mesh.castShadow = false;                    // spec §4.3：实例不投影
+    mesh.receiveShadow = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    if (pool && pool.mesh.parent) pool.mesh.parent.remove(pool.mesh);
+    if (pool) pool.mesh.dispose();
+    if (sceneRef) sceneRef.add(mesh);
+    instPools[pid] = { mesh: mesh, cap: cap };
+    return instPools[pid];
+  }
+
+  function flightsFor(slot, pid) {
+    var n = 0;
+    for (var i = 0; i < flights.length; i++) {
+      if (flights[i].slot === slot && flights[i].pid === pid) n++;
+    }
+    return n;
+  }
+
+  function rebuildProduct(pid) {
+    if (!pid) return;
+    var product = G.data.productById(pid);
+    if (!product) return;
+    // 取消该 pid 的挂起弹入（重建后实例下标会移位）
+    for (var pi = instPops.length - 1; pi >= 0; pi--) {
+      if (instPops[pi].pid === pid) instPops.splice(pi, 1);
+    }
+    var need = 0;
+    for (var i = 0; i < allSlots.length; i++) {
+      var s = allSlots[i];
+      if (s.productId === pid) need += Math.min(s.count, 16);
+    }
+    if (need === 0) {
+      if (instPools[pid]) instPools[pid].mesh.count = 0;
+      if (instPools[pid]) instPools[pid].mesh.instanceMatrix.needsUpdate = true;
+      return;
+    }
+    var pool = ensurePool(pid, need);
+    var at = 0;
+    for (var j = 0; j < allSlots.length; j++) {
+      var slot = allSlots[j];
+      if (slot.productId !== pid) continue;
+      var vis = Math.min(slot.count, 16) - flightsFor(slot, pid);   // 在飞的落位后才出现
+      for (var k = 0; k < vis; k++) {
+        _vp.copy(itemLocalPos(k, slot.faceZ)).add(slot.itemGroup.position);
+        _m4.compose(_vp, _q, _vs);
+        pool.mesh.setMatrixAt(at++, _m4);
+      }
+    }
+    pool.mesh.count = at;
+    pool.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /* 落位弹入：0.8→1.0 缩放重写单实例矩阵，90ms；rebuild 会取消挂起项 */
+  function startInstancePop(pid, slot, idxInSlot) {
+    var pool = instPools[pid];
+    if (!pool || typeof requestAnimationFrame !== 'function') return;
+    // 定位该 (slot, idxInSlot) 在池中的实例下标：按 rebuildProduct 的确定性顺序重算
+    var at = 0, found = -1;
+    for (var j = 0; j < allSlots.length; j++) {
+      var s = allSlots[j];
+      if (s.productId !== pid) continue;
+      var vis = Math.min(s.count, 16) - flightsFor(s, pid);
+      if (s === slot) {
+        found = (idxInSlot < vis) ? at + idxInSlot : -1;
+        break;
+      }
+      at += vis;
+    }
+    if (found < 0) return;
+    instPops.push({ pid: pid, at: found, slot: slot, idxInSlot: idxInSlot, t0: Date.now() });
+    if (!instPopRaf) { instPopRaf = true; requestAnimationFrame(stepInstancePops); }
+  }
+
+  function stepInstancePops() {
+    var now = Date.now();
+    for (var i = instPops.length - 1; i >= 0; i--) {
+      var p = instPops[i];
+      var pool = instPools[p.pid];
+      if (!pool || p.at >= pool.mesh.count) { instPops.splice(i, 1); continue; }
+      var k = Math.min(1, (now - p.t0) / 90);
+      var sc = 0.8 + 0.2 * k;
+      _vp.copy(itemLocalPos(p.idxInSlot, p.slot.faceZ)).add(p.slot.itemGroup.position);
+      _vs.set(sc, sc, sc);
+      _m4.compose(_vp, _q, _vs);
+      pool.mesh.setMatrixAt(p.at, _m4);
+      pool.mesh.instanceMatrix.needsUpdate = true;
+      if (k >= 1) instPops.splice(i, 1);
+    }
+    _vs.set(1, 1, 1);
+    if (instPops.length) requestAnimationFrame(stepInstancePops);
+    else instPopRaf = false;
+  }
+
   /* 每行 4 个、最多 4 行（DESIGN §5）：列距 0.14 使一格的堆宽 0.58 < 格间距 0.6；
      行沿格位深度向货架内侧排（层高只有 0.5m，竖着堆会穿过上层隔板） */
   function itemLocalPos(i, faceZ) {
@@ -349,11 +465,13 @@
 
         var holder = new THREE.Group();
 
-        // 不可见命中盒：射线靶子。用 opacity 0 而非 visible=false，确保必定可被 raycast 命中。
+        // 不可见命中盒：射线靶子。本构建 Raycaster 不检查 visible（已验证），
+        // visible=false 让渲染器跳过它 → 省 60 个透明 pass draw call；opacity 0 保留兜底。
         var hit = new THREE.Mesh(hitGeo(), flatMat(0xFFFFFF, {
           transparent: true, opacity: 0, depthWrite: false
         }));
         hit.position.set(pos.x, y + 0.23, frontZ - facing * 0.25);
+        hit.visible = false;
         holder.add(hit);
 
         // 可见价签：贴在该格下方层板（y-0.04）的前缘；同时是准星高亮的载体
@@ -410,25 +528,12 @@
   // 格位可见商品堆
   // ---------------------------------------------------------------
   function updateSlotVisual(slot) {
-    var group = slot.itemGroup;
-    var want = (!slot.productId || slot.count <= 0) ? 0 : Math.min(slot.count, 16);
-
-    // 商品种类变了，整格重来；否则只增删末尾
-    if (slot._visPid !== slot.productId) {
-      while (group.children.length) group.remove(group.children[group.children.length - 1]);
+    var old = slot._visPid;
+    if (old !== slot.productId) {
+      if (old) rebuildProduct(old);
       slot._visPid = slot.productId;
     }
-    while (group.children.length > want) group.remove(group.children[group.children.length - 1]);
-    if (want === 0) return;
-
-    var product = G.data.productById(slot.productId);
-    if (!product) return;
-    while (group.children.length < want) {
-      var i = group.children.length;
-      var cube = new THREE.Mesh(itemGeo(), itemMat(product.color));
-      cube.position.copy(itemLocalPos(i, slot.faceZ));
-      group.add(cube);
-    }
+    if (slot.productId) rebuildProduct(slot.productId);
   }
 
   /* DESIGN §6：商品自纸箱位置直线飞向目标格位，180ms ease-out。
@@ -440,7 +545,7 @@
 
   function flyItem(slot, product, fromPos, targetLocal, idx) {
     if (!sceneRef || typeof requestAnimationFrame !== 'function') return null;
-    var mesh = new THREE.Mesh(itemGeo(), itemMat(product.color));
+    var mesh = new THREE.Mesh(itemGeoFor(product.id), itemMatFor(product.id));
     mesh.position.copy(fromPos);
     sceneRef.add(mesh);
 
@@ -458,7 +563,8 @@
       if (f.slot.productId !== f.pid || f.slot.count <= f.idx) {
         if (f.mesh.parent) f.mesh.parent.remove(f.mesh);
         flights.splice(i, 1);
-        continue;   // 中断销毁：不调 onDone，格位已被清空/换商品（spec §5.2）
+        rebuildProduct(f.pid);   // 中断销毁：不调 onDone，但需同步实例（count 已变）
+        continue;   // 格位已被清空/换商品（spec §5.2）
       }
       var k = Math.min(1, (now - f.t0) / 180);
       f.mesh.position.lerpVectors(f.from, f.to, easeOutCubic(k));
@@ -470,18 +576,6 @@
     }
     if (flights.length) requestAnimationFrame(stepFlights);
     else flightRaf = false;
-  }
-
-  /* DESIGN §6：上架成功，商品方块 90ms 内从 0.8 倍缩放到 1.0 倍出现 */
-  function popInItem(mesh) {
-    if (!mesh || typeof requestAnimationFrame !== 'function') return;
-    var t0 = Date.now();
-    mesh.scale.setScalar(0.8);
-    (function step() {
-      var k = Math.min(1, (Date.now() - t0) / 90);
-      mesh.scale.setScalar(0.8 + 0.2 * k);
-      if (k < 1) requestAnimationFrame(step);
-    })();
   }
 
   // ---------------------------------------------------------------
@@ -529,14 +623,14 @@
       if (f) {
         f.onDone = function () {
           updateSlotVisual(slot);
-          if (slot.count > idx && idx < slot.itemGroup.children.length) popInItem(slot.itemGroup.children[idx]);
+          startInstancePop(pid, slot, idx);
         };
         return true;
       }
     }
 
     updateSlotVisual(slot);
-    if (slot.count <= slot.itemGroup.children.length) popInItem(slot.itemGroup.children[slot.count - 1]);
+    if (idx < 16) startInstancePop(pid, slot, idx);
     return true;
   }
 
@@ -650,6 +744,9 @@
     restoreShelves: restoreShelves,
     syncLayout: syncLayout,
     setCashierVisible: setCashierVisible,
+    itemGeoFor: itemGeoFor,
+    itemMatFor: itemMatFor,
+    _instPools: instPools,
     _flights: flights
   };
 })();

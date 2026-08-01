@@ -383,19 +383,51 @@
         '方便面 ' + G.world.getStockCount('f_noodle') + ' / 矿泉水 ' + G.world.getStockCount('d_water'));
       ck('world.emptyBox', boxes[0].data.box.itemsLeft === 0, '剩余 ' + boxes[0].data.box.itemsLeft);
 
-      /* --- 格位渲染增量化（Task 2）--- */
+      /* --- 商品实例池（B-T2，取代 A 的 children 断言）--- */
+      function instCountOf(pid) {
+        var pool = G.world._instPools && G.world._instPools[pid];
+        return pool && pool.mesh ? pool.mesh.count : 0;
+      }
+      function slotVisSum(pid) {
+        var n = 0;
+        for (var i = 0; i < G.world.slots.length; i++) {
+          var s = G.world.slots[i];
+          if (s.productId === pid) n += Math.min(s.count, 16);
+        }
+        return n;
+      }
       var incSlot = G.world.findSlotWithProduct('f_noodle');
-      var incBefore = incSlot ? incSlot.itemGroup.children.length : -1;
-      var incGeo = (incSlot && incSlot.itemGroup.children[0]) ? incSlot.itemGroup.children[0].geometry : null;
+      var incBefore = instCountOf('f_noodle');
       if (incSlot) { G.world.removeItem(incSlot); G.world.removeItem(incSlot); }
-      var incAfter = incSlot ? incSlot.itemGroup.children.length : -1;
-      var incGeoSame = !!(incGeo && incSlot && incSlot.itemGroup.children[0] &&
-        incSlot.itemGroup.children[0].geometry === incGeo);
+      var incAfter = instCountOf('f_noodle');
       if (incSlot) { G.world.addItem(incSlot, 'f_noodle'); G.world.addItem(incSlot, 'f_noodle'); }
-      ck('world.slotIncremental', incBefore > 2 && incAfter === incBefore - 2 &&
-        incSlot.itemGroup.children.length === incBefore,
-        '增删前 ' + incBefore + ' → 删2后 ' + incAfter + ' → 补2后 ' + (incSlot ? incSlot.itemGroup.children.length : -1));
-      ck('world.slotSharedGeo', incGeoSame, '格位商品方块必须复用同一 BoxGeometry 实例');
+      ck('world.instCount', incBefore > 2 && incAfter === incBefore - 2 &&
+        instCountOf('f_noodle') === incBefore && instCountOf('f_noodle') === slotVisSum('f_noodle'),
+        '实例数 ' + incBefore + ' → 删2后 ' + incAfter + ' → 补2后 ' + instCountOf('f_noodle'));
+      var poolOk = true, poolDetail = '';
+      var poolN = 0;
+      for (var pk in G.world._instPools) {
+        var pl = G.world._instPools[pk];
+        poolN++;
+        if (!pl.mesh || !pl.mesh.isInstancedMesh) { poolOk = false; poolDetail = pk + ' 非 InstancedMesh'; break; }
+        if (pl.mesh.frustumCulled !== false) { poolOk = false; poolDetail = pk + ' 未关 frustumCulled'; break; }
+        if (pl.mesh.castShadow !== false) { poolOk = false; poolDetail = pk + ' 不得 castShadow'; break; }
+      }
+      ck('world.instGrouping', poolOk && poolN >= 2 && poolN <= 24,
+        poolDetail || ('实例池 ' + poolN + ' 组'));
+      var hitVisOk = true, hitRayOk = false;
+      for (var hi = 0; hi < G.world.slots.length; hi++) {
+        var hs = G.world.slots[hi];
+        if (hs.hitMesh.visible !== false || hs.hitMesh.material.opacity !== 0) { hitVisOk = false; break; }
+      }
+      ck('world.hitInvisible', hitVisOk, '全部命中盒须 visible=false 且 opacity=0');
+      var rayS = G.world.slots[0];
+      var rayOrigin = new THREE.Vector3(rayS.pos.x, rayS.pos.y + 0.23, rayS.pos.z + rayS.faceZ * 2);
+      var rayDir = new THREE.Vector3(0, 0, -rayS.faceZ);
+      scene.updateMatrixWorld(true);   // 自测此前从未渲染，矩阵仍是单位阵（同 stanceFraming 的先例）
+      var rc = new THREE.Raycaster(rayOrigin, rayDir, 0.01, 5);
+      hitRayOk = rc.intersectObject(rayS.marker, true).length > 0;
+      ck('world.hitRaycastable', hitRayOk, 'visible=false 的命中盒必须仍可被射线命中');
 
       /* --- 价签三状态（Task 4）--- */
       var stockedSlot = G.world.findSlotWithProduct('f_noodle');
@@ -438,19 +470,17 @@
       var flySlot = G.world.findSlotWithProduct('f_noodle');
       // 上架已把该格填满到 slotCap，先腾 2 件容量；下面两次 addItem 正好补回，净库存不变
       if (flySlot) { G.world.removeItem(flySlot); G.world.removeItem(flySlot); }
-      var flyBefore = flySlot ? flySlot.itemGroup.children.length : -1;
+      var flyBefore = instCountOf('f_noodle');
       var flyFrom = new THREE.Vector3(flySlot.pos.x + 1.5, 1.2, flySlot.pos.z + 1.5);
       var flyOk = G.world.addItem(flySlot, 'f_noodle', flyFrom);
       ck('world.flightAccepted', flyOk === true, 'addItem 带 fromPos 应正常返回 true');
       // 飞行期间格内正式方块数暂时比 count 少 1（落位后补齐），故断言「格内 + 飞行中 === count」
       var flying = (G.world._flights || []).filter(function (f) { return f.slot === flySlot; }).length;
-      ck('world.flightCount', flySlot.itemGroup.children.length + flying === flySlot.count,
-        '格内方块 ' + flySlot.itemGroup.children.length + ' + 飞行中 ' + flying +
-        ' 应等于 count ' + flySlot.count + '（进入前 ' + flyBefore + '）');
+      ck('world.flightCount', instCountOf('f_noodle') + flying === slotVisSum('f_noodle'),
+        '实例 ' + instCountOf('f_noodle') + ' + 飞行中 ' + flying + ' 应等于应显 ' + slotVisSum('f_noodle'));
       ck('world.flightNotInGroup',
-        (G.world._flights || []).length === 0 ||
-        G.world._flights.every(function (f) { return f.mesh.parent !== flySlot.itemGroup; }),
-        '飞行中的临时 mesh 不得挂进 itemGroup');
+        (G.world._flights || []).every(function (f) { return f.mesh.isInstancedMesh !== true; }),
+        '飞行 mesh 必须是独立 Mesh 而非实例');
       // 省略 fromPos 时不应产生飞行（自测与顾客取货都走这条路径）
       var noFlyBefore = (G.world._flights || []).length;
       G.world.addItem(flySlot, 'f_noodle');
