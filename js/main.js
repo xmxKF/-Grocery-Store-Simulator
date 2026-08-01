@@ -31,12 +31,24 @@
     scene.background = new THREE.Color(0xAECBE0);          // DESIGN §1.3
     scene.fog = new THREE.Fog(0xAECBE0, 30, 90);           // DESIGN §5
 
-    var amb = new THREE.AmbientLight(0xFFFFFF, 0.65);      // DESIGN §5 灯光（只有两盏）
+    var amb = new THREE.AmbientLight(0xFFFFFF, 0.12);      // DESIGN §5.5 保底不死黑
     scene.add(amb);
-    var sun = new THREE.DirectionalLight(0xFFF6E5, 0.75);
+    var hemi = new THREE.HemisphereLight(0xAECBE0, 0xC7BEAF, 0.55);  // 天/地，暖色反弹主来源
+    scene.add(hemi);
+    var sun = new THREE.DirectionalLight(0xFFF6E5, 0.85);
     sun.position.set(8, 14, 6);
-    sun.castShadow = false;
     sun.target.position.set(0, 0, 0);
+    if (G.tex && G.tex.on) {
+      sun.castShadow = true;                                // DESIGN §5.5：唯一投影灯
+      sun.shadow.mapSize.set(2048, 2048);
+      sun.shadow.camera.left = -13; sun.shadow.camera.right = 13;
+      sun.shadow.camera.top = 13; sun.shadow.camera.bottom = -13;
+      sun.shadow.camera.near = 1; sun.shadow.camera.far = 40;
+      sun.shadow.bias = -0.0004;
+      sun.shadow.normalBias = 0.03;
+    } else {
+      sun.castShadow = false;
+    }
     scene.add(sun);
     scene.add(sun.target);
 
@@ -56,6 +68,10 @@
       canvasEl = renderer.domElement;
       app.appendChild(canvasEl);
       if (G.tex && G.tex.setRenderer) G.tex.setRenderer(renderer);
+      if (G.tex && G.tex.on) {
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      }
     } catch (e) {
       // 无头环境可能没有 WebGL：游戏逻辑必须照常运行，只是不渲染
       renderer = null;
@@ -534,6 +550,60 @@
       ck('tex.lowfxNull', G.tex.floorWood(8, 6) === null && G.tex.labelBand('can', '#FFF') === null,
         'on=false 时生成器必须返回 null');
       G.tex.on = onSave;
+
+      /* --- 灯光与阴影（B-T5）--- */
+      var lights = { amb: 0, hemi: 0, dir: 0, castDir: 0, other: 0 };
+      scene.traverse(function (o) {
+        if (o.isAmbientLight) lights.amb++;
+        else if (o.isHemisphereLight) lights.hemi++;
+        else if (o.isDirectionalLight) { lights.dir++; if (o.castShadow) lights.castDir++; }
+        else if (o.isLight) lights.other++;
+      });
+      ck('light.count', lights.amb === 1 && lights.hemi === 1 && lights.dir === 1 && lights.other === 0 &&
+        (G.tex.on ? lights.castDir === 1 : lights.castDir === 0),
+        JSON.stringify(lights) + ' on=' + G.tex.on);
+      var sunRef = null;
+      scene.traverse(function (o) { if (!sunRef && o.isDirectionalLight) sunRef = o; });
+      var frusOk = true, frusDetail = '';
+      if (G.tex.on && sunRef) {
+        /* 无头环境从不渲染，shadow camera 的矩阵不会被渲染器更新——手动摆位后再取逆矩阵 */
+        var shCam = sunRef.shadow.camera;
+        shCam.position.copy(sunRef.position);
+        shCam.lookAt(sunRef.target.position);
+        shCam.updateProjectionMatrix();
+        shCam.updateMatrixWorld(true);
+        shCam.matrixWorldInverse.copy(shCam.matrixWorld).invert();
+        var toLight = new THREE.Matrix4().copy(shCam.matrixWorldInverse);
+        for (var ci = 0; ci < G.world.colliders.length && frusOk; ci++) {
+          var col = G.world.colliders[ci];
+          var xs = [col.minX, col.maxX], zs = [col.minZ, col.maxZ], ys = [0, 3];
+          for (var a = 0; a < 2; a++) for (var b = 0; b < 2; b++) for (var d = 0; d < 2; d++) {
+            var pt = new THREE.Vector3(xs[a], ys[d], zs[b]).applyMatrix4(toLight);
+            if (pt.x < shCam.left || pt.x > shCam.right || pt.y < shCam.bottom || pt.y > shCam.top ||
+                -pt.z < shCam.near || -pt.z > shCam.far) {
+              frusOk = false;
+              frusDetail = 'collider#' + ci + ' 角点越界 ' + JSON.stringify({ x: round2(pt.x), y: round2(pt.y), z: round2(pt.z) });
+              break;
+            }
+          }
+        }
+      }
+      ck('shadow.frustumCovers', frusOk, frusDetail || (G.tex.on ? '全部 collider 角点在阴影视锥内' : 'lowfx 跳过'));
+      var shellOk = true;
+      scene.traverse(function (o) {
+        if (o.isMesh && o.castShadow && o.geometry && o.geometry.parameters) {
+          var pp = o.geometry.parameters;
+          if ((pp.width >= 12 || pp.depth >= 12) && o.position.y >= 1) shellOk = false;  // 大跨度高位物 = 墙/天花板
+        }
+      });
+      ck('shadow.shellNoCast', shellOk, '墙/天花板类大件不得 castShadow');
+      var instCastOk = true;
+      for (var ip in G.world._instPools) {
+        if (G.world._instPools[ip].mesh.castShadow) { instCastOk = false; break; }
+      }
+      ck('shadow.itemsNoCast', instCastOk, '商品实例不得 castShadow');
+      ck('shadow.lowfx', G.tex.on ? true : !(renderer && renderer.shadowMap && renderer.shadowMap.enabled),
+        'lowfx 下 shadowMap 必须关闭');
 
       /* --- 上架飞行动画（Task 5）--- */
       var flySlot = G.world.findSlotWithProduct('f_noodle');

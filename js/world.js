@@ -305,7 +305,11 @@
     return entry;
   }
 
-  function addMesh(mesh) {
+  function addMesh(mesh, cast, receive) {
+    if (G.tex && G.tex.on) {
+      mesh.castShadow = !!cast;
+      mesh.receiveShadow = !!receive;
+    }
     sceneRef.add(mesh);
     return mesh;
   }
@@ -325,14 +329,14 @@
       flatMat(G.tex.on ? 0xFFFFFF : 0xD8D2C6, G.tex.on ? { map: G.tex.floorWood(8, 6) } : null));
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(0, 0, 0);
-    addMesh(floor);
+    addMesh(floor, false, true);
 
     // 天花板
     var ceiling = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF_X * 2, ROOM_HALF_Z * 2),
       flatMat(G.tex.on ? 0xFFFFFF : 0xF5F2EC, G.tex.on ? { map: G.tex.ceilingPanel(13.3, 10) } : null));
     ceiling.rotation.x = Math.PI / 2;
     ceiling.position.set(0, WALL_H, 0);
-    addMesh(ceiling);
+    addMesh(ceiling, false, true);
 
     // 墙体：wallMat 拆为 per-wall 材质（repeat 不同）
     var wMatW = flatMat(G.tex.on ? 0xFFFFFF : 0xEFE9DE, G.tex.on ? { map: G.tex.wallWainscot(6.1, 1) } : null);
@@ -341,32 +345,32 @@
     // 西墙 x=-8
     var wWall = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, ROOM_HALF_Z * 2 + WALL_T), wMatW);
     wWall.position.set(-ROOM_HALF_X, WALL_H / 2, 0);
-    addMesh(wWall);
+    addMesh(wWall, false, true);
     // 北墙 z=-6
     var nWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wMatNS);
     nWall.position.set(0, WALL_H / 2, -ROOM_HALF_Z);
-    addMesh(nWall);
+    addMesh(nWall, false, true);
     // 南墙 z=6
     var sWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wMatNS);
     sWall.position.set(0, WALL_H / 2, ROOM_HALF_Z);
-    addMesh(sWall);
+    addMesh(sWall, false, true);
     // 东墙（留门缺口 z∈[-1,1]）
     var eWallA = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wMatE);
     eWallA.position.set(ROOM_HALF_X, WALL_H / 2, -3.5);
-    addMesh(eWallA);
+    addMesh(eWallA, false, true);
     var eWallB = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wMatE);
     eWallB.position.set(ROOM_HALF_X, WALL_H / 2, 3.5);
-    addMesh(eWallB);
+    addMesh(eWallB, false, true);
 
     // 门框（装饰立柱）
     var frameMat = flatMat(0x7A6A55);
     var postGeo = new THREE.BoxGeometry(0.15, WALL_H, 0.15);
     var postA = new THREE.Mesh(postGeo, frameMat);
     postA.position.set(ROOM_HALF_X, WALL_H / 2, -1);
-    addMesh(postA);
+    addMesh(postA, false, true);
     var postB = new THREE.Mesh(postGeo.clone(), frameMat);
     postB.position.set(ROOM_HALF_X, WALL_H / 2, 1);
-    addMesh(postB);
+    addMesh(postB, false, true);
 
     // 卸货区地面
     var yardW = 3.5, yardD = 5;
@@ -374,7 +378,7 @@
       flatMat(G.tex.on ? 0xFFFFFF : 0xC7BEAF, G.tex.on ? { map: G.tex.yardConcrete(2, 2.9) } : null));
     yard.rotation.x = -Math.PI / 2;
     yard.position.set(ROOM_HALF_X + yardW / 2, 0.001, 0);
-    addMesh(yard);
+    addMesh(yard, false, true);
 
     // 墙体碰撞体
     colliders.push({ minX: -ROOM_HALF_X - 0.2, maxX: -ROOM_HALF_X + 0.2, minZ: -ROOM_HALF_Z - 0.2, maxZ: ROOM_HALF_Z + 0.2 });
@@ -410,11 +414,11 @@
     var body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 2.0),
       flatMat(G.tex.on ? 0xFFFFFF : 0x6E7A88, G.tex.on ? { map: G.tex.counterLaminate(1.2, 2) } : null));
     body.position.set(-7.0, 0.5, 0);
-    addMesh(body);
+    addMesh(body, true, true);
     var belt = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 1.6),
       flatMat(0x4E5866, G.tex.on ? { map: G.tex.beltRubber(3, 5) } : null));
     belt.position.set(-7.0, 1.04, 0);
-    addMesh(belt);
+    addMesh(belt, true, true);
     colliders.push({ minX: -7.6, maxX: -6.4, minZ: -1.0, maxZ: 1.0 });
     registerInteractable(body, { type: 'register', data: {}, prompt: '[E] 进入收银台' });
   }
@@ -422,10 +426,10 @@
   function buildComputer() {
     var body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 0.4), flatMat(0x3A424C));
     body.position.set(-7.0, 0.45, -5.3);
-    addMesh(body);
+    addMesh(body, true, true);
     var screen = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.03), flatMat(0x4C9BE8));
     screen.position.set(-7.0, 0.85, -5.08);
-    addMesh(screen);
+    addMesh(screen, true, true);
     colliders.push({ minX: -7.25, maxX: -6.75, minZ: -5.5, maxZ: -5.1 });
     registerInteractable(body, { type: 'computer', data: {}, prompt: '[E] 打开订货电脑' });
   }
@@ -433,7 +437,7 @@
   function buildTrash() {
     var bin = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.25, 0.6, 8), flatMat(0x5A6B5E));
     bin.position.set(7.0, 0.3, -5.3);
-    addMesh(bin);
+    addMesh(bin, true, true);
     colliders.push({ minX: 6.7, maxX: 7.3, minZ: -5.6, maxZ: -5.0 });
     registerInteractable(bin, { type: 'trash', data: {}, prompt: '[E] 丢弃纸箱' });
   }
@@ -457,6 +461,7 @@
     legL.position.set(-0.11, 0.275, 0);
     var legR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.55, 0.16), legMat);
     legR.position.set(0.11, 0.275, 0);
+    torso.castShadow = head.castShadow = legL.castShadow = legR.castShadow = !!(G.tex && G.tex.on);
     group.add(torso, head, legL, legR);
 
     group.position.set(-7.75, 0, 0);
@@ -491,19 +496,23 @@
       G.tex.on ? { map: (isFridge ? G.tex.fridgeSteel(4, 4) : G.tex.shelfMetal(4, 4)) } : null);
     var back = new THREE.Mesh(new THREE.BoxGeometry(SHELF_W, SHELF_H, 0.05), frameMat);
     back.position.set(centerX, SHELF_H / 2, backZ);
+    back.castShadow = back.receiveShadow = !!(G.tex && G.tex.on);
     group.add(back);
 
     var sideGeo = new THREE.BoxGeometry(0.05, SHELF_H, SHELF_D);
     var sideL = new THREE.Mesh(sideGeo, frameMat);
     sideL.position.set(centerX - SHELF_W / 2, SHELF_H / 2, centerZ);
+    sideL.castShadow = sideL.receiveShadow = !!(G.tex && G.tex.on);
     group.add(sideL);
     var sideR = new THREE.Mesh(sideGeo.clone(), frameMat);
     sideR.position.set(centerX + SHELF_W / 2, SHELF_H / 2, centerZ);
+    sideR.castShadow = sideR.receiveShadow = !!(G.tex && G.tex.on);
     group.add(sideR);
 
     SLOT_HEIGHTS.forEach(function (y) {
       var board = new THREE.Mesh(new THREE.BoxGeometry(SHELF_W, 0.04, SHELF_D), frameMat);
       board.position.set(centerX, y - 0.04, centerZ);
+      board.castShadow = board.receiveShadow = !!(G.tex && G.tex.on);
       group.add(board);
     });
 
@@ -748,6 +757,7 @@
     group.position.set(slotPos.x, 0.225, slotPos.z);
     var body = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.45),
       flatMat(0xC08B4E, G.tex.on ? { map: G.tex.cardboard(1, 1) } : null));
+    body.castShadow = body.receiveShadow = !!(G.tex && G.tex.on);
     group.add(body);
     var label = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.12), flatMat(CAT_COLORS[product.cat] || 0xFFFFFF));
     label.position.set(-0.226, 0, 0);
