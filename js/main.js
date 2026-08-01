@@ -466,15 +466,41 @@
         '改价后价签贴图未刷新');
       G.shop.setPrice('f_noodle', 2.2);   // 还原，后续断言依赖 r=1.0 必买
 
+      /* --- 品类基础几何（B-T3）--- */
+      var shapeOk = true, shapeDetail = '';
+      var SHAPES = ['bottle', 'can', 'carton', 'bag', 'tub', 'jug', 'tray', 'produce'];
+      for (var spi = 0; spi < G.data.PRODUCTS.length; spi++) {
+        var sp = G.data.PRODUCTS[spi];
+        if (SHAPES.indexOf(sp.shape) === -1) { shapeOk = false; shapeDetail = sp.id + ' shape=' + sp.shape; break; }
+      }
+      ck('data.shapeComplete', shapeOk, shapeDetail || '24 商品 shape 全合法');
+      var envOk = true, envDetail = '';
+      var geoSeen = {};
+      for (var gpi = 0; gpi < G.data.PRODUCTS.length; gpi++) {
+        var gp = G.data.PRODUCTS[gpi];
+        var geo = G.world.itemGeoFor(gp.id);
+        geoSeen[gp.shape] = geo;
+        geo.computeBoundingBox();
+        var bb = geo.boundingBox;
+        var sx = (gp.scale && gp.scale[0]) || 1, sz = (gp.scale && gp.scale[2]) || 1;
+        var w = (bb.max.x - bb.min.x) * sx, d = (bb.max.z - bb.min.z) * sz;
+        var cap = (gp.shape === 'tray') ? 0.175 : 0.165;
+        if (w > cap || d > cap) { envOk = false; envDetail = gp.id + ' 包络 ' + w.toFixed(3) + '×' + d.toFixed(3); break; }
+        if (bb.min.y < -0.001) { envOk = false; envDetail = gp.id + ' 几何基面必须在 y=0'; break; }
+      }
+      ck('world.geoEnvelope', envOk, envDetail || '全部包络合规且基面落地');
+      var geoCount = 0;
+      for (var gk in geoSeen) geoCount++;
+      ck('world.geoShared', geoCount <= 8, '基础几何 ' + geoCount + ' 套（≤8）');
+
       /* --- 上架飞行动画（Task 5）--- */
       var flySlot = G.world.findSlotWithProduct('f_noodle');
       // 上架已把该格填满到 slotCap，先腾 2 件容量；下面两次 addItem 正好补回，净库存不变
       if (flySlot) { G.world.removeItem(flySlot); G.world.removeItem(flySlot); }
-      var flyBefore = instCountOf('f_noodle');
       var flyFrom = new THREE.Vector3(flySlot.pos.x + 1.5, 1.2, flySlot.pos.z + 1.5);
       var flyOk = G.world.addItem(flySlot, 'f_noodle', flyFrom);
       ck('world.flightAccepted', flyOk === true, 'addItem 带 fromPos 应正常返回 true');
-      // 飞行期间格内正式方块数暂时比 count 少 1（落位后补齐），故断言「格内 + 飞行中 === count」
+      // 实例数暂比应显数少 1（在飞行项落位后补齐）
       var flying = (G.world._flights || []).filter(function (f) { return f.slot === flySlot; }).length;
       ck('world.flightCount', instCountOf('f_noodle') + flying === slotVisSum('f_noodle'),
         '实例 ' + instCountOf('f_noodle') + ' + 飞行中 ' + flying + ' 应等于应显 ' + slotVisSum('f_noodle'));

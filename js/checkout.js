@@ -5,10 +5,6 @@
 
   var G = (window.G = window.G || {});
 
-  /* DESIGN §5：货架/传送带上的商品方块 0.16×0.22×0.16，纯色 Lambert */
-  var ITEM_GEO = new THREE.BoxGeometry(0.16, 0.22, 0.16);
-  var itemMats = {};
-
   var BILLS = [100, 50, 20, 10, 5, 1];
   var CHANGE_BTNS = [0.1, 0.5, 1, 5, 10, 20, 50, 100];
 
@@ -69,12 +65,6 @@
     var sc = scene();
     if (sc) sc.traverse(function (o) { if (!camRef && o.isCamera) camRef = o; });
     return camRef;
-  }
-
-  function matFor(hex) {
-    var k = String(hex);
-    if (!itemMats[k]) itemMats[k] = new THREE.MeshLambertMaterial({ color: hex, flatShading: true });
-    return itemMats[k];
   }
 
   function priceOf(pid) {
@@ -145,14 +135,14 @@
   function beltPos(i) {
     var f = beltFrame();
     var cols = Math.max(3, Math.floor((f.halfSide * 1.3) / 0.18));
-    return new THREE.Vector3(f.origin.x, f.origin.y + 0.11, f.origin.z)
+    return new THREE.Vector3(f.origin.x, f.origin.y + 0.02, f.origin.z)
       .addScaledVector(f.side, -f.halfSide + 0.18 + (i % cols) * 0.18)
       .addScaledVector(f.dir, Math.floor(i / cols) * 0.2);
   }
 
   function scannedPos(k) {
     var f = beltFrame();
-    return new THREE.Vector3(f.origin.x, f.origin.y + 0.11 + k * 0.06, f.origin.z)
+    return new THREE.Vector3(f.origin.x, f.origin.y + 0.02 + k * 0.06, f.origin.z)
       .addScaledVector(f.side, f.halfSide - 0.22)
       .addScaledVector(f.dir, 0.1);
   }
@@ -199,7 +189,7 @@
   /* price 由顾客在拿货时锁定（GDD §5），缺失时才退回当前售价 */
   function addBeltItem(pid, price) {
     var p = G.data.productById(pid);
-    var m = new THREE.Mesh(ITEM_GEO, matFor(p.color));
+    var m = new THREE.Mesh(G.world.itemGeoFor(pid), G.world.itemMatFor(pid));
     m.position.copy(beltPos(tx.items.length));
     var sc = scene();
     if (sc) sc.add(m);

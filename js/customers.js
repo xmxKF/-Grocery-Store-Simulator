@@ -13,9 +13,7 @@
   var TORSO_GEO = new THREE.BoxGeometry(0.45, 1.0, 0.3);
   var HEAD_GEO = new THREE.BoxGeometry(0.28, 0.28, 0.28);
   var LEG_GEO = new THREE.BoxGeometry(0.14, 0.55, 0.16);
-  var HAND_GEO = new THREE.BoxGeometry(0.13, 0.13, 0.13);
   var bodyMats = {};
-  var itemMats = {};
 
   var active = [];
   var spawnTimer = null;
@@ -139,8 +137,9 @@
   }
 
   function addHandCube(c, pid) {
-    var p = G.data.productById(pid);
-    c.hands.add(new THREE.Mesh(HAND_GEO, matFor(itemMats, p.color)));
+    var m = new THREE.Mesh(G.world.itemGeoFor(pid), G.world.itemMatFor(pid));
+    m.scale.setScalar(0.8);
+    c.hands.add(m);
     layoutHands(c);
   }
 

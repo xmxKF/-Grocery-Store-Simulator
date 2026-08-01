@@ -19,19 +19,47 @@
   var SLOT_LOCAL_X = [-0.6, 0, 0.6];
   var SLOT_HEIGHTS = [0.9, 1.4];
 
-  // 格位商品方块：几何体与材质全局共享（每格最多 16 个 × 最多 48 格，绝不逐个 new）
+  // 格位商品方块：几何体全局共享，形状未知时兜底（每格最多 16 个 × 最多 48 格，绝不逐个 new）
   var ITEM_GEO = null;
-  var ITEM_MATS = {};
 
   function itemGeo() {
     if (!ITEM_GEO) ITEM_GEO = new THREE.BoxGeometry(0.16, 0.22, 0.16);
     return ITEM_GEO;
   }
 
-  function itemMat(color) {
-    var k = String(color);
-    if (!ITEM_MATS[k]) ITEM_MATS[k] = flatMat(color);
-    return ITEM_MATS[k];
+  // ---- 品类基础几何（B-T3）：8 套共享，基面 y=0，XZ 包络 ≤0.16（tray 0.17 躺放例外）----
+  var BASE_GEOS = null;
+  function baseGeos() {
+    if (BASE_GEOS) return BASE_GEOS;
+    var g = {};
+    var pts = [
+      new THREE.Vector2(0.001, 0), new THREE.Vector2(0.034, 0),
+      new THREE.Vector2(0.037, 0.02), new THREE.Vector2(0.037, 0.13),
+      new THREE.Vector2(0.018, 0.17), new THREE.Vector2(0.016, 0.21),
+      new THREE.Vector2(0.001, 0.22)
+    ];
+    g.bottle = new THREE.LatheGeometry(pts, 8);
+    g.can = new THREE.CylinderGeometry(0.036, 0.036, 0.13, 8);
+    g.can.translate(0, 0.065, 0);
+    g.carton = new THREE.BoxGeometry(0.14, 0.20, 0.07);
+    g.carton.translate(0, 0.10, 0);
+    g.bag = new THREE.CylinderGeometry(0.08, 0.066, 0.20, 6);
+    g.bag.translate(0, 0.10, 0);
+    g.tub = new THREE.CylinderGeometry(0.06, 0.055, 0.16, 10);
+    g.tub.translate(0, 0.08, 0);
+    var jpts = [
+      new THREE.Vector2(0.001, 0), new THREE.Vector2(0.042, 0),
+      new THREE.Vector2(0.045, 0.03), new THREE.Vector2(0.045, 0.12),
+      new THREE.Vector2(0.026, 0.15), new THREE.Vector2(0.020, 0.17),
+      new THREE.Vector2(0.020, 0.21), new THREE.Vector2(0.001, 0.21)
+    ];
+    g.jug = new THREE.LatheGeometry(jpts, 8);
+    g.tray = new THREE.BoxGeometry(0.17, 0.06, 0.12);
+    g.tray.translate(0, 0.03, 0);
+    g.produce = new THREE.IcosahedronGeometry(0.055, 0);
+    g.produce.translate(0, 0.055, 0);
+    BASE_GEOS = g;
+    return g;
   }
 
   // ---- 商品实例池（B-T2）：按 pid 一组 InstancedMesh，增删走全量重建，无索引簿记 ----
@@ -41,12 +69,20 @@
   var _m4 = new THREE.Matrix4();
   var _q = new THREE.Quaternion();
   var _vp = new THREE.Vector3();
-  var _vs = new THREE.Vector3(1, 1, 1);
 
-  function itemGeoFor(pid) { return itemGeo(); }          // T3 起按 shape 分派
-  function itemMatFor(pid) {
+  var PID_MATS = {};
+  function itemGeoFor(pid) {
     var product = G.data.productById(pid);
-    return itemMat(product ? product.color : 0xFFFFFF);   // T3 起 per-pid 含标签贴图
+    var g = baseGeos();
+    return (product && g[product.shape]) ? g[product.shape] : itemGeo();
+  }
+  function itemMatFor(pid) {
+    if (PID_MATS[pid]) return PID_MATS[pid];
+    var product = G.data.productById(pid);
+    var accent = (product && product.accent) || (product && product.color) || '#FFFFFF';
+    var map = (G.tex && G.tex.labelBand) ? G.tex.labelBand(product ? product.shape : '', accent) : null;
+    PID_MATS[pid] = flatMat(product ? product.color : 0xFFFFFF, map ? { map: map } : null);
+    return PID_MATS[pid];
   }
 
   function ensurePool(pid, need) {
@@ -79,6 +115,8 @@
     if (!pid) return;
     var product = G.data.productById(pid);
     if (!product) return;
+    var psc = product.scale;
+    var sVec = new THREE.Vector3(psc ? psc[0] : 1, psc ? psc[1] : 1, psc ? psc[2] : 1);
     // 取消该 pid 的挂起弹入（重建后实例下标会移位）
     for (var pi = instPops.length - 1; pi >= 0; pi--) {
       if (instPops[pi].pid === pid) instPops.splice(pi, 1);
@@ -101,7 +139,7 @@
       var vis = Math.min(slot.count, 16) - flightsFor(slot, pid);   // 在飞的落位后才出现
       for (var k = 0; k < vis; k++) {
         _vp.copy(itemLocalPos(k, slot.faceZ)).add(slot.itemGroup.position);
-        _m4.compose(_vp, _q, _vs);
+        _m4.compose(_vp, _q, sVec);
         pool.mesh.setMatrixAt(at++, _m4);
       }
     }
@@ -126,6 +164,15 @@
       at += vis;
     }
     if (found < 0) return;
+    // 立即以 0.8 缩放写入该实例矩阵，消除下一帧渲染前的全尺寸闪现
+    var product = G.data.productById(pid);
+    var psc = product && product.scale;
+    var popVec0 = new THREE.Vector3(
+      0.8 * (psc ? psc[0] : 1), 0.8 * (psc ? psc[1] : 1), 0.8 * (psc ? psc[2] : 1));
+    _vp.copy(itemLocalPos(idxInSlot, slot.faceZ)).add(slot.itemGroup.position);
+    _m4.compose(_vp, _q, popVec0);
+    pool.mesh.setMatrixAt(found, _m4);
+    pool.mesh.instanceMatrix.needsUpdate = true;
     instPops.push({ pid: pid, at: found, slot: slot, idxInSlot: idxInSlot, t0: Date.now() });
     if (!instPopRaf) { instPopRaf = true; requestAnimationFrame(stepInstancePops); }
   }
@@ -138,14 +185,16 @@
       if (!pool || p.at >= pool.mesh.count) { instPops.splice(i, 1); continue; }
       var k = Math.min(1, (now - p.t0) / 90);
       var sc = 0.8 + 0.2 * k;
+      var product = G.data.productById(p.pid);
+      var psc = product && product.scale;
+      var popVec = new THREE.Vector3(
+        sc * (psc ? psc[0] : 1), sc * (psc ? psc[1] : 1), sc * (psc ? psc[2] : 1));
       _vp.copy(itemLocalPos(p.idxInSlot, p.slot.faceZ)).add(p.slot.itemGroup.position);
-      _vs.set(sc, sc, sc);
-      _m4.compose(_vp, _q, _vs);
+      _m4.compose(_vp, _q, popVec);
       pool.mesh.setMatrixAt(p.at, _m4);
       pool.mesh.instanceMatrix.needsUpdate = true;
       if (k >= 1) instPops.splice(i, 1);
     }
-    _vs.set(1, 1, 1);
     if (instPops.length) requestAnimationFrame(stepInstancePops);
     else instPopRaf = false;
   }
@@ -155,7 +204,7 @@
   function itemLocalPos(i, faceZ) {
     var col = i % 4, row = Math.floor(i / 4);
     var depth = -(faceZ || 1);
-    return new THREE.Vector3((col - 1.5) * 0.14, 0.11, depth * (0.16 + row * 0.16));
+    return new THREE.Vector3((col - 1.5) * 0.14, 0, depth * (0.16 + row * 0.16));
   }
 
   // 价签条：宽同原挡板 0.55，高 0.06，厚 0.04（与层板等厚，见 buildRack 的 board）
