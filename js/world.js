@@ -314,6 +314,10 @@
     return mesh;
   }
 
+  // 壳体（地板/天花板/墙/门框柱/卸货区地面）标记：几何启发式覆盖不到小跨度壳体（如东墙缺口段、门框柱），
+  // 断言 shadow.shellNoCast 需要一个不依赖尺寸的兜底判据
+  function addShell(m) { m.userData.shell = true; return addMesh(m, false, true); }
+
   function flatMat(color, opts) {
     var params = { color: color, flatShading: true };
     if (opts) { for (var k in opts) params[k] = opts[k]; }
@@ -329,14 +333,14 @@
       flatMat(G.tex.on ? 0xFFFFFF : 0xD8D2C6, G.tex.on ? { map: G.tex.floorWood(8, 6) } : null));
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(0, 0, 0);
-    addMesh(floor, false, true);
+    addShell(floor);
 
     // 天花板
     var ceiling = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF_X * 2, ROOM_HALF_Z * 2),
       flatMat(G.tex.on ? 0xFFFFFF : 0xF5F2EC, G.tex.on ? { map: G.tex.ceilingPanel(13.3, 10) } : null));
     ceiling.rotation.x = Math.PI / 2;
     ceiling.position.set(0, WALL_H, 0);
-    addMesh(ceiling, false, true);
+    addShell(ceiling);
 
     // 墙体：wallMat 拆为 per-wall 材质（repeat 不同）
     var wMatW = flatMat(G.tex.on ? 0xFFFFFF : 0xEFE9DE, G.tex.on ? { map: G.tex.wallWainscot(6.1, 1) } : null);
@@ -345,32 +349,32 @@
     // 西墙 x=-8
     var wWall = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, ROOM_HALF_Z * 2 + WALL_T), wMatW);
     wWall.position.set(-ROOM_HALF_X, WALL_H / 2, 0);
-    addMesh(wWall, false, true);
+    addShell(wWall);
     // 北墙 z=-6
     var nWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wMatNS);
     nWall.position.set(0, WALL_H / 2, -ROOM_HALF_Z);
-    addMesh(nWall, false, true);
+    addShell(nWall);
     // 南墙 z=6
     var sWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wMatNS);
     sWall.position.set(0, WALL_H / 2, ROOM_HALF_Z);
-    addMesh(sWall, false, true);
+    addShell(sWall);
     // 东墙（留门缺口 z∈[-1,1]）
     var eWallA = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wMatE);
     eWallA.position.set(ROOM_HALF_X, WALL_H / 2, -3.5);
-    addMesh(eWallA, false, true);
+    addShell(eWallA);
     var eWallB = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wMatE);
     eWallB.position.set(ROOM_HALF_X, WALL_H / 2, 3.5);
-    addMesh(eWallB, false, true);
+    addShell(eWallB);
 
     // 门框（装饰立柱）
     var frameMat = flatMat(0x7A6A55);
     var postGeo = new THREE.BoxGeometry(0.15, WALL_H, 0.15);
     var postA = new THREE.Mesh(postGeo, frameMat);
     postA.position.set(ROOM_HALF_X, WALL_H / 2, -1);
-    addMesh(postA, false, true);
+    addShell(postA);
     var postB = new THREE.Mesh(postGeo.clone(), frameMat);
     postB.position.set(ROOM_HALF_X, WALL_H / 2, 1);
-    addMesh(postB, false, true);
+    addShell(postB);
 
     // 卸货区地面
     var yardW = 3.5, yardD = 5;
@@ -378,7 +382,7 @@
       flatMat(G.tex.on ? 0xFFFFFF : 0xC7BEAF, G.tex.on ? { map: G.tex.yardConcrete(2, 2.9) } : null));
     yard.rotation.x = -Math.PI / 2;
     yard.position.set(ROOM_HALF_X + yardW / 2, 0.001, 0);
-    addMesh(yard, false, true);
+    addShell(yard);
 
     // 墙体碰撞体
     colliders.push({ minX: -ROOM_HALF_X - 0.2, maxX: -ROOM_HALF_X + 0.2, minZ: -ROOM_HALF_Z - 0.2, maxZ: ROOM_HALF_Z + 0.2 });

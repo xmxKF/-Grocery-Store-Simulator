@@ -591,9 +591,12 @@
       ck('shadow.frustumCovers', frusOk, frusDetail || (G.tex.on ? '全部 collider 角点在阴影视锥内' : 'lowfx 跳过'));
       var shellOk = true;
       scene.traverse(function (o) {
-        if (o.isMesh && o.castShadow && o.geometry && o.geometry.parameters) {
-          var pp = o.geometry.parameters;
-          if ((pp.width >= 12 || pp.depth >= 12) && o.position.y >= 1) shellOk = false;  // 大跨度高位物 = 墙/天花板
+        if (o.isMesh && o.castShadow) {
+          if (o.userData.shell) shellOk = false;
+          else if (o.geometry && o.geometry.parameters) {
+            var pp = o.geometry.parameters;
+            if ((pp.width >= 12 || pp.depth >= 12) && o.position.y >= 1) shellOk = false;  // 大跨度高位物 = 墙/天花板（第二道防线）
+          }
         }
       });
       ck('shadow.shellNoCast', shellOk, '墙/天花板类大件不得 castShadow');
