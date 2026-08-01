@@ -614,10 +614,8 @@
         '缺 _test.spawnOne/gait');
       if (ct && ct.spawnOne) {
         var minTop = 99, maxTop = 0, partsOk = true, rootYOk = true, matSharedSeen = {};
-        var sample = null;
         for (var si2 = 0; si2 < 50; si2++) {
           var cc = ct.spawnOne();
-          if (!sample) sample = cc;
           var meshN = 0, top = 0;
           cc.mesh.traverse(function (o) {
             if (o.isMesh && o.parent !== cc.hands) meshN++;
@@ -642,6 +640,7 @@
         var matOk = true;
         for (var mk in matSharedSeen) if (matSharedSeen[mk] === 'DIFF') matOk = false;
         ck('cust.matShared', matOk, '同色衣装必须共享材质实例');
+        ck('cust.rootY', rootYOk, '50 次采样根节点 y 必须恒为 0');
         var gc = ct.spawnOne();
         var maxAmp = 0;
         for (var gt = 0; gt < 120; gt++) {

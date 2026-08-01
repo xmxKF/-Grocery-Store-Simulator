@@ -28,7 +28,6 @@
     new THREE.BoxGeometry(0.33, 0.13, 0.24)                        // 蓬顶
   ];
   var bodyMats = {};
-  var itemMats = {};
 
   var active = [];
   var spawnTimer = null;
@@ -185,10 +184,10 @@
     var legR = new THREE.Mesh(LEG_GEO, pantsMat);
     legR.position.set(0.115 * w, 0.72, 0);
     var shoeL = new THREE.Mesh(SHOE_GEO, shoeMat);
-    shoeL.position.set(0, -0.66, 0.02);
+    shoeL.position.set(0, -0.68, 0.02);
     legL.add(shoeL);
     var shoeR = new THREE.Mesh(SHOE_GEO, shoeMat);
-    shoeR.position.set(0, -0.66, 0.02);
+    shoeR.position.set(0, -0.68, 0.02);
     legR.add(shoeR);
     var armL = new THREE.Mesh(ARM_GEO, shirtMat);
     armL.position.set(-(0.22 * w + 0.07), 1.34, 0);
@@ -289,7 +288,7 @@
   }
 
   /* 步态唯一写入点（DESIGN §5.7）：根节点 y 恒 0，浮沉只动上身部件；
-     未来物理接管时在此函数开头加 if (c.ragdoll) return; 即可 */
+     物理接管钩子已预留：c.ragdoll 为真时跳过步态 */
   function applyGait(c, dt, moving) {
     if (c.ragdoll) return;
     var target = moving ? 1 : 0;
@@ -301,7 +300,7 @@
     c.legR.rotation.x = -s * 0.44;
     c.armL.rotation.x = -s * 0.30;
     c.armR.rotation.x = s * 0.30;
-    var bob = 0.03 * Math.abs(Math.sin(c.phase)) * c.amp;
+    var bob = -0.03 * Math.abs(Math.sin(c.phase)) * c.amp;
     c.torso.position.y = c.baseY.torso + bob;
     c.head.position.y = c.baseY.head + bob;
     c.hair.position.y = c.baseY.hair + bob;
