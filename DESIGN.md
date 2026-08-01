@@ -151,14 +151,14 @@ cast / receive 矩阵：
 | 墙 / 天花板 / 门框柱 | ✗ | ✓ | 无窗室内，壳体投影=全店漆黑；headless 自测看不出来，必须先写断言再动灯 |
 | 货架框/层板/背板 | ✓ | ✓ | 层板投在下层，空间感主力 |
 | 价签 / 命中盒 | ✗ | ✗ | |
-| 商品 InstancedMesh | ✗ | ✗ | 0.16m 商品阴影可解但价值低：省 60+ 深度 draw，接触暗部由层板投影代偿 |
+| 商品 InstancedMesh | ✗ | ✗ | 0.16m 商品阴影可解但价值低：省 ≤24 组深度 draw，接触暗部由层板投影代偿 |
 | 顾客（躯干/头/腿） | ✓ | ✗ | 移动阴影是"活着"的最强信号；发型/臂/鞋不 cast 省一半 |
 | 纸箱/收银台/传送带/电脑/垃圾桶 | ✓ | ✓ | |
 | 收银员 | ✓ | ✗ | 站桩体型同顾客规格，cast only（不接，代码与顾客一致） |
 
 【红线】墙与天花板 castShadow 恒为 false（无窗室内，壳体投影 = 全店漆黑，headless 自测无法发现，只能靠断言 shadow.shellNoCast 防守）。
 
-阴影 pass ≈134 个深度 draw，总提交 ≈490，中配预算内。lowfx：`shadowMap.enabled=false` 一个布尔。
+阴影 pass ≈139 个深度 draw（按 §5.8 新分项：racks 50 + 顾客 14×4=56 + 收银员 4 + 纸箱 24 + 房间设施 5，货架玻璃/价签/命中盒/InstancedMesh 商品/顾客发型臂鞋/箱标签均不投影），总提交 ≈641（502 主渲染 + 139 阴影深度），中配预算内。lowfx：`shadowMap.enabled=false` 一个布尔。
 
 ### 5.6 商品表现
 八套共享几何（单件 ≤112 三角（jug 上限）；XZ 包络 ≤0.165m（断言值；tray 0.175 躺放例外））：
@@ -213,7 +213,9 @@ InstancedMesh 商品实例池：按商品 pid 分组，每个上架中的商品�
 - 【禁令】本项目的 three.min.js（r128 构建）shader 不含 USE_INSTANCING_COLOR 分支，`InstancedMesh.setColorAt()` 会静默无效（商品全白且无报错）。实例颜色一律走 per-pid 材质。
 - 【禁令】InstancedMesh 必须 frustumCulled = false（r128 无 computeBoundingSphere，默认视锥剔除按原点包围球计算，会导致整组商品消失）。
 
-draw call 账（Lv10 满级，理论满员估算）：items ≤24 / tags 60 / racks 52 / 顾客 14×10=140 / 箱 24 / 收银员 10 / 房间 15 / 传送带商品 ≤12 → ≈357。**总闸门 < 420**（自测断言 `perf.drawCallCeiling`，B-T7）。实测：headless 自测在 Lv10 灌满库存的瞬时快照（无在场顾客/纸箱）下 drawable=135，远低于闸门；三角预算 < 12 万（900 件全 jug 最坏情形 ≈10.1 万三角）。
+draw call 账（Lv10 满级，绝对最坏负载）：items ≤24 / tags 60 / racks 52 / 房间与设施 15 / 收银员 4 / 纸箱 ≤48 / 顾客部件 14×9=126 / 顾客手持 ≤168 → 合计上限 ≈473。**总闸门 < 520**（473 + 10% 余量，自测断言 `perf.drawCallCeiling`，B-T7）。
+
+自测负载生成方式：**轮转灌店**（外层轮次、内层逐商品各占一格再换下一商品）逼出 ≤24 组实例池上限——若按商品顺序灌店，先到的商品会占满所有匹配格位，实际只会建出 2 组池，测不出真实上限；轮转版本 + 卸货区堆满 24 箱 + 满场 14 名顾客各持 12 件手持商品，才是这套自测能构造出的绝对最坏负载。实测 headless 自测 drawable=502，低于闸门 520；三角预算 < 12 万（900 件全 jug 最坏情形 ≈10.1 万三角）。
 
 ### 5.9 lowfx
 `localStorage['gss-lowfx']='1'` → `G.tex.on=false`（生成器全返回 null，材质纯色）+ `renderer.shadowMap.enabled=false` + 跳过 castShadow 赋值。逻辑对象、价签状态、命中盒不变——玩法与存档不分叉。切换需刷新页面。

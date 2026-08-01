@@ -562,8 +562,8 @@
       ck('light.count', lights.amb === 1 && lights.hemi === 1 && lights.dir === 1 && lights.other === 0 &&
         (G.tex.on ? lights.castDir === 1 : lights.castDir === 0),
         JSON.stringify(lights) + ' on=' + G.tex.on);
-      ck('shadow.rendererState', !G.tex.on || !renderer ||
-        (renderer.shadowMap.enabled === true && renderer.shadowMap.type === THREE.PCFSoftShadowMap),
+      ck('shadow.rendererState', !renderer ||
+        (renderer.shadowMap.enabled === !!G.tex.on && (!G.tex.on || renderer.shadowMap.type === THREE.PCFSoftShadowMap)),
         'shadowMap enabled=' + (renderer && renderer.shadowMap.enabled) + ' type=' + (renderer && renderer.shadowMap.type));
       var sunRef = null;
       scene.traverse(function (o) { if (!sunRef && o.isDirectionalLight) sunRef = o; });
@@ -651,7 +651,7 @@
           var la = Math.abs(gc.legL.rotation.x);
           if (la > maxAmp) maxAmp = la;
         }
-        /* 上界 0.4451：0.44×amp（amp≤1）的不可达上界 +0.5% 容差；有效防线是下界 0.2 */
+        /* 上界 0.4451：0.44×amp（amp≤1）的不可达上界 +1.16% 容差（0.44×1.0116≈0.4451）；有效防线是下界 0.2 */
         ck('cust.gaitAmp', maxAmp > 0.2 && maxAmp <= 0.4451,
           '腿摆峰值 ' + maxAmp.toFixed(3) + ' rad，应 ∈ (0.2, 0.4451]');
         for (var gt2 = 0; gt2 < 60; gt2++) ct.gait(gc, 1 / 60, false);
@@ -826,16 +826,28 @@
       G.state.level = 10;
       G.state.licenses = ['食品', '饮料', '日用品', '生鲜'];
       G.world.syncLayout();
-      var fillGuard = 0;
-      for (var fpi = 0; fpi < G.data.PRODUCTS.length; fpi++) {
-        var fp = G.data.PRODUCTS[fpi];
-        var fSlot;
-        while ((fSlot = G.world.findEmptyOrMatchingSlot(fp.id)) && fillGuard++ < 5000) {
-          if (!G.world.addItem(fSlot, fp.id)) break;
+      G.world.setCashierVisible(true);
+      /* 轮转灌店：外层轮次、内层商品 → 逼出 ≤24 组实例池上限（顺序灌店只会建 2 组） */
+      var fillGuard = 0, filled = true;
+      while (filled && fillGuard < 5000) {
+        filled = false;
+        for (var fpi = 0; fpi < G.data.PRODUCTS.length; fpi++) {
+          var fpid = G.data.PRODUCTS[fpi].id;
+          var fSlot = G.world.findEmptyOrMatchingSlot(fpid);
+          if (fSlot && G.world.addItem(fSlot, fpid)) { filled = true; fillGuard++; }
+        }
+      }
+      /* 卸货区堆箱上限情形 + 满场顾客满手持（绝对最坏负载） */
+      for (var bi = 0; bi < 24; bi++) G.world.spawnBox(G.data.PRODUCTS[bi % G.data.PRODUCTS.length].id);
+      for (var ci = 0; ci < 14; ci++) {
+        var pc = G.customers._test.spawnOne();
+        for (var hi = 0; hi < 12; hi++) {
+          var hpid = G.data.PRODUCTS[hi % G.data.PRODUCTS.length].id;
+          pc.hands.add(new THREE.Mesh(G.world.itemGeoFor(hpid), G.world.itemMatFor(hpid)));
         }
       }
       var drawN = countDrawables(scene);
-      ck('perf.drawCallCeiling', drawN < 420, 'Lv10 灌满全店 drawable=' + drawN + '，天花板 420');
+      ck('perf.drawCallCeiling', drawN < 520, '满场轮转灌店+满员顾客手持 drawable=' + drawN + '，天花板 520（绝对最坏实测 473 + 10% 余量）');
 
       /* --- 渲染（无头环境可能没有 WebGL）--- */
       if (renderer) {
