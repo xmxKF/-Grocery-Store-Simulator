@@ -133,7 +133,7 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 表中 repeat 为该用途的典型值，由调用方传入生成器（如北墙 16.2m 与东墙段 5m 各传各的 `L/2`）。全部 POT + `RepeatWrapping` + 默认 mipmap（WebGL1 合法）。anisotropy 只给 `floorWood`/`yardConcrete`：`Math.min(4, renderer ? renderer.capabilities.getMaxAnisotropy() : 1)`——必须判 `renderer` null（无头环境为 null）。UV 不改：Box 大面 U 沿长度、V 沿高度，`repeat.set(n,1)` 使腔裙板贴底、横向平铺；Plane 同理。生成总耗时预算 < 20ms（一次性，启动时）。
 
 红线：
-- 【红线】传送带材质 .color 恒为 #4E5866（checkout.findBeltMesh 靠色值全场景定位台面，自 B 终审起以 `userData.belt` 标记为准，色值为兜底——顾客裤装色板含同色）；橡胶纹理做成近灰度靠材质色相乘。
+- 【红线】传送带材质 .color 恒为 #4E5866（视觉契约：收银台台面在全店配色里的唯一识别色，玩家一眼认得出放货位置；C-T3 起 checkout 已改经 `registers[i].beltMesh` 定位，色值不再兼任功能锚点）；橡胶纹理做成近灰度靠材质色相乘。
 - 【红线】纸箱材质保持 color.set() 语义（updateBoxVisual 靠改色切换满/空）；瓦楞纹理近灰度。
 
 ### 5.5 灯光与阴影

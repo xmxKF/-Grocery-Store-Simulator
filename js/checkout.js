@@ -149,8 +149,9 @@
   }
 
   /* ---------- 队列 ---------- */
+  /* GDD §7「每台 5 位」：队首站 front，其后 queue[i] 占 queueSpots[i-1]，故容量 = 队位数 + 1 */
   function queueCap(reg) {
-    return (reg.ref.queueSpots && reg.ref.queueSpots.length) || 5;
+    return (reg.ref.queueSpots ? reg.ref.queueSpots.length + 1 : 5);
   }
 
   /* CONTRACTS：在已建收银台中选 queue.length 最小者（并列取低 index），全部满则 false */

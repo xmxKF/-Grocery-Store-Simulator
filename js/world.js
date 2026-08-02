@@ -530,6 +530,12 @@
     return entry;
   }
 
+  function retireInteractable(obj3D) {
+    for (var i = interactables.length - 1; i >= 0; i--) {
+      if (interactables[i].mesh === obj3D) interactables.splice(i, 1);
+    }
+  }
+
   function addMesh(mesh, cast, receive) {
     if (G.tex && G.tex.on) {
       mesh.castShadow = !!cast;
@@ -736,7 +742,11 @@
     var i;
     if (G.state && G.state.zones) G.state.zones[zone] = true;
     for (i = 0; i < shutterMeshes.length; i++) {
-      if (shutterMeshes[i].userData.shutter === zone) shutterMeshes[i].visible = false;
+      if (shutterMeshes[i].userData.shutter !== zone) continue;
+      shutterMeshes[i].visible = false;
+      // r128 的 Raycaster 不看 visible：隐形卷帘门会截胡穿过门洞的准星射线
+      // （门 collider 同时被移除，player.occluded() 也拦不住），交互体必须一并摘除
+      retireInteractable(shutterMeshes[i]);
     }
     for (i = colliders.length - 1; i >= 0; i--) {
       if (colliders[i].zoneGate === zone) colliders.splice(i, 1);

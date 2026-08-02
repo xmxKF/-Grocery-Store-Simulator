@@ -407,6 +407,29 @@
         Math.abs(f0.origin.z - 7.6) < 1.2,
         'R1 frame.origin 必须落在自家柜台（' + (f0 && f0.origin.x.toFixed(2)) + ',' + (f0 && f0.origin.z.toFixed(2)) + '）');
       ck('checkout.shortestQueue', typeof G.checkout.joinQueue === 'function', 'joinQueue 存在（多台分流逻辑生效）');
+
+      /* GDD §7「每台 5 位」：front + queueSpots×4。假顾客灌满一台后立即标记 removed 让 prune 清走，
+         不能留在队里干扰后面的 customer.queued */
+      var r0 = G.world.registers[0];
+      var fakeQ = [], joinedN = 0;
+      for (var qi = 0; qi < 6; qi++) {
+        var fc = {
+          state: 'queueing', removed: false, queueTarget: null,
+          moveTo: function (t) { this.queueTarget = t; },
+          atDestination: function () { return false; }
+        };
+        if (G.checkout.joinQueue(fc)) { fakeQ.push(fc); joinedN++; }
+      }
+      var qCapOk = joinedN === 5 && regs[0].queue.length === 5 &&
+        fakeQ[0].queueTarget === r0.front && fakeQ[4].queueTarget === r0.queueSpots[3];
+      var q5z = (fakeQ[4] && fakeQ[4].queueTarget) ? fakeQ[4].queueTarget.z : 'n/a';   // prune 会清掉 queueTarget，先取
+      for (var qj = 0; qj < fakeQ.length; qj++) fakeQ[qj].removed = true;
+      G.checkout.update(0.05);   // prune 清走假顾客
+      ck('checkout.queueCap', qCapOk && regs[0].queue.length === 0,
+        '单台应容 front + 4 队位 = 5 人（实入队 ' + joinedN + '，第 5 人目标 z=' + q5z +
+        '，应 = queueSpots[3] 的 ' + r0.queueSpots[3].z + '；清理后残留 ' + regs[0].queue.length + '）');
+
+      var shuttersAtBoot = G.world.interactables.filter(function (it) { return it.type === 'shutter'; }).length;
       var bzBefore = G.state.money;
       ck('shop.buyZoneGates', G.shop.buyZone('B') === false && G.state.money === bzBefore,
         'Lv1 买区域 B 必须被等级门槛拒绝且不扣钱');
@@ -936,6 +959,11 @@
         if (!pp2 || !pp2.length) { navAllOk = false; navBad = 'entry→#' + na + ' 不可达'; }
       }
       ck('nav.fullOpenConnected', navAllOk, navBad || '全开态 entry→全部关键点可寻路');
+
+      /* C-T3：卷帘门开区后 mesh 只是 visible=false，交互体必须摘除，否则隐形门截胡门洞射线 */
+      var shuttersLeft = G.world.interactables.filter(function (it) { return it.type === 'shutter'; }).length;
+      ck('shop.shutterRetired', shuttersAtBoot === 3 && shuttersLeft === 0,
+        '开局 shutter 交互体 ' + shuttersAtBoot + ' 个（应 3），B/C/W 全开后剩 ' + shuttersLeft + '（应 0）');
 
       /* C-T3：B/C 开区后 R2/R3 必须已建造并被 checkout 接管 */
       ck('checkout.threeRegisters',

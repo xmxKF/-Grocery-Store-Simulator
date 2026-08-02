@@ -207,7 +207,7 @@ G.clamp(v, a, b)
 - 上架飞行动画队列 `G.world._flights`（仅供自测）：`[{mesh, from, to, t0, slot, onDone, pid, idx}]`，`stepFlights` 自驱 rAF 消费。
 - `G.customers._test`：自测钩子（spawnOne 等），仅 ?selftest 使用。
 - lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js、world.js 与 customers.js 通过 G.tex.on 判断。
-- `belt.userData.belt`：world.js 打标、checkout.findBeltMesh 优先取用（色值 #4E5866 为兜底）——T6 顾客裤装含同色后，色值不再全场景唯一。
+- `belt.userData.belt`：world.js 打标（另带 `userData.registerId`）。C-T3 起 checkout 经 `G.world.registers[i].beltMesh` 直取自家台面，`userData.belt` 标记与 #4E5866 色值均不再承担 checkout 定位职责（色值红线仍在 DESIGN §5.4，属视觉契约）。
 - `userData.shell`：world.js 打标（10 处壳体）、main.js 自测 shellNoCast 断言消费——壳体绝不 castShadow 的硬标记。
 
 ## 编码纪律
