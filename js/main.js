@@ -453,6 +453,40 @@
       ck('world.slotShape', slotEntries.length === 24 && G.world.slots.indexOf(slotEntries[0].data.slot) !== -1,
         'shelfSlot 交互体 ' + slotEntries.length + ' 个');
 
+      /* --- C-T4 仓库 ---
+         位置在「强制送达」之后：本块开 W 区会把卸货区切到西侧并灌满，
+         早于此处的 shop.order（卸货区容量校验）/ shop.delivery / world.boxShape /
+         world.slotShape（W 区不含货架，但顺序上以既有断言为准）都不受影响；
+         shuttersAtBoot 的开局计数也已在本块之前取样 */
+      ck('world.storageApi', typeof G.world.storeBox === 'function' && typeof G.world.takeBox === 'function',
+        '缺 storeBox/takeBox');
+      // 直接开仓测试（绕过钱：手动置区+建造——T6 前 zones 尚不入存档，安全）
+      G.state.zones.W = true;
+      G.world.buildZone('W');
+      ck('world.storageBuilt', (G.world.storageSlots || []).length === 24,
+        '存储位 ' + (G.world.storageSlots || []).length + '（应 24）');
+      var stBox = G.world.spawnBox('f_noodle');
+      var stSlot = G.world.storageSlots[0];
+      var stOk = G.world.storeBox(stSlot, stBox);
+      ck('world.storageStore', stOk === true && stSlot.box === stBox &&
+        Math.abs(stBox.mesh.position.x - stSlot.pos.x) < 0.01, '放箱入位');
+      var back = G.world.takeBox(stSlot);
+      ck('world.storageTake', back === stBox && stSlot.box === null, '取箱出位');
+      // 序列化往返
+      G.world.storeBox(stSlot, stBox);
+      var stData = G.world.serializeStorage();
+      ck('world.storageRoundtrip', Array.isArray(stData) && stData.length === 1 &&
+        stData[0].id === stSlot.id && stData[0].pid === 'f_noodle', JSON.stringify(stData));
+      G.world.takeBox(stSlot);   // 清场；stBox 留在场上由后续断言消耗或无害
+      // 卸货区满 → spawnBox 返回 null
+      var spawned = 0, lastSpawn = true;
+      for (var yb = 0; yb < 14 && lastSpawn; yb++) {
+        lastSpawn = !!G.world.spawnBox('d_water');
+        if (lastSpawn) spawned++;
+      }
+      ck('world.freeYardSlotNull', lastSpawn === false && spawned <= 12,
+        '卸货区满后 spawnBox 必须返回 null（本轮成功 ' + spawned + ' 箱，含前序残留合计 ≤12 位）');
+
       /* --- 价签与命中盒（Task 3）--- */
       var tagOk = true, hitOk = true, tagDetail = '';
       for (var si = 0; si < G.world.slots.length; si++) {

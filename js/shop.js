@@ -5,6 +5,8 @@
 
   // 待送达箱子队列：{pid, remaining}（remaining 单位秒，下单时按 deliverySec + 序号×0.4 排开）
   var deliveryQueue = [];
+  // 卸货区满时的提示节流：一次订货只提示一次，下次成功下单时复位
+  var yardFullToasted = false;
 
   function getMaxBoxesPerOrder() {
     var max = G.data.CONFIG.maxBoxesPerOrder;
@@ -62,6 +64,7 @@
       }
     });
 
+    yardFullToasted = false;
     return true;
   }
 
@@ -71,8 +74,17 @@
     deliveryQueue.forEach(function (entry) {
       entry.remaining -= dt;
       if (entry.remaining <= 0) {
-        G.world.spawnBox(entry.pid);
-        G.bus.emit('delivery', { productId: entry.pid });
+        var box = G.world.spawnBox(entry.pid);
+        if (box) {
+          G.bus.emit('delivery', { productId: entry.pid });
+        } else {
+          entry.remaining = 2;   // 卸货区满：2 秒后重试
+          if (!yardFullToasted) {
+            if (G.ui && G.ui.toast) G.ui.toast('卸货区已满，配送车在门外等待', 'warn');
+            yardFullToasted = true;
+          }
+          remaining.push(entry);
+        }
       } else {
         remaining.push(entry);
       }

@@ -653,16 +653,18 @@
       addShell(post);
     });
 
-    // 卸货区地面：东侧一整块混凝土（人行道与卸货位并作一块）x[16,20] z[2,10]；西侧仓库外 x[-20,-16] z[4.1,7.3]
+    // 卸货区地面：东西两侧各一整块混凝土，铺满各自围栏footprint（围栏中线即地面边界），
+    // 否则玩家出门/绕行时踩虚空。东 x[16,20] z[2,10]；西 x[-20,-16] z[3.5,10.5]
+    // （西侧原 z[4.1,7.3] 短于围栏 z[3.5,10.5]，且送货门缺口 z∈[6,8] 的北半 0.7m 门槛悬空）
     var yardE = new THREE.Mesh(new THREE.PlaneGeometry(4, 8),
       flatMat(G.tex.on ? 0xFFFFFF : 0xC7BEAF, G.tex.on ? { map: G.tex.yardConcrete(2, 4) } : null));
     yardE.rotation.x = -Math.PI / 2;
     yardE.position.set(18, 0.001, 6);
     addShell(yardE);
-    var yardW = new THREE.Mesh(new THREE.PlaneGeometry(4, 3.2),
-      flatMat(G.tex.on ? 0xFFFFFF : 0xC7BEAF, G.tex.on ? { map: G.tex.yardConcrete(2, 1.6) } : null));
+    var yardW = new THREE.Mesh(new THREE.PlaneGeometry(4, 7),
+      flatMat(G.tex.on ? 0xFFFFFF : 0xC7BEAF, G.tex.on ? { map: G.tex.yardConcrete(2, 3.5) } : null));
     yardW.rotation.x = -Math.PI / 2;
-    yardW.position.set(-18, 0.001, 5.7);
+    yardW.position.set(-18, 0.001, 7);
     addShell(yardW);
 
     // 世界边界围栏（东西两侧各三条）：收在混凝土地面范围内，玩家出门后不得踩虚空。
@@ -737,6 +739,81 @@
     registerInteractable(bin, { type: 'trash', data: {}, prompt: '[E] 丢弃纸箱' });
   }
 
+  // ---------------------------------------------------------------
+  // 仓库存储架（C-T4）：W 区开放后建 24 个地面位标记，玩家可暂存纸箱
+  // ---------------------------------------------------------------
+  var storageSlots = [];
+  var STORAGE_MARKER_GEO = null;   // 24 个标记共用一套几何（材质必须逐个独立，否则高亮一个全亮）
+
+  function buildStorage() {
+    if (storageSlots.length) return;
+    if (!STORAGE_MARKER_GEO) STORAGE_MARKER_GEO = new THREE.BoxGeometry(0.6, 0.02, 0.6);
+    for (var i = 0; i < STORAGE_TABLE.length; i++) {
+      var p = STORAGE_TABLE[i];
+      var marker = new THREE.Mesh(STORAGE_MARKER_GEO,
+        flatMat(G.tex.on ? 0xFFFFFF : 0x8C9AA6, G.tex.on ? { map: G.tex.shelfMetal(1, 1) } : null));
+      marker.position.set(p.x, 0.01, p.z);
+      addMesh(marker, false, true);
+      var slot = { id: 'st' + i, pos: new THREE.Vector3(p.x, 0, p.z), marker: marker, box: null };
+      storageSlots.push(slot);
+      registerInteractable(marker, { type: 'storage', data: { slot: slot }, prompt: '' });
+    }
+  }
+
+  function storeBox(slot, box) {
+    if (!slot || slot.box || !box || !box.mesh) return false;
+    slot.box = box;
+    box.mesh.position.set(slot.pos.x, 0.225, slot.pos.z);
+    box.mesh.rotation.set(0, 0, 0);
+    // 重新注册为可交互箱（玩家举起时已被 removeInteractable；放回存储位即恢复）。
+    // 先 retire 一次保证「一 mesh 一交互体」：玩家路径下是空转，直接调 API 存箱时防重复登记。
+    retireInteractable(box.mesh);
+    var prod = G.data.productById(box.productId);
+    registerInteractable(box.mesh, {
+      type: 'box', data: { box: box },
+      prompt: '[E] 搬起纸箱（' + (prod ? prod.name : box.productId) + ' ×' + box.itemsLeft + '）'
+    });
+    return true;
+  }
+
+  function takeBox(slot) {
+    if (!slot || !slot.box) return null;
+    var box = slot.box;
+    slot.box = null;
+    return box;
+  }
+
+  /* 玩家直接对存储位上的箱按 E 搬起时（不走 takeBox），由 player.pickUpBox 调用清位 */
+  function releaseStorageOf(box) {
+    for (var i = 0; i < storageSlots.length; i++) {
+      if (storageSlots[i].box === box) { storageSlots[i].box = null; return; }
+    }
+  }
+
+  function serializeStorage() {
+    var out = [];
+    for (var i = 0; i < storageSlots.length; i++) {
+      var s = storageSlots[i];
+      if (s.box) out.push({ id: s.id, pid: s.box.productId, left: s.box.itemsLeft });
+    }
+    return out;
+  }
+
+  function restoreStorage(data) {
+    if (!Array.isArray(data)) return;
+    for (var i = 0; i < data.length; i++) {
+      var d = data[i];
+      var slot = null;
+      for (var j = 0; j < storageSlots.length; j++) { if (storageSlots[j].id === d.id) { slot = storageSlots[j]; break; } }
+      if (!slot || slot.box) continue;
+      var box = spawnBox(d.pid, slot.pos);
+      if (!box) continue;
+      box.itemsLeft = d.left || 0;
+      updateBoxVisual(box);
+      slot.box = box;
+    }
+  }
+
   /* 区域开放（幂等）：置位 + 视觉 + 物理的单一入口，调用方无需再关心先后次序 */
   function buildZone(zone) {
     var i;
@@ -754,7 +831,7 @@
     syncLayout();
     if (zone === 'B' && !registerAt(1)) buildRegister(1);
     if (zone === 'C' && !registerAt(2)) buildRegister(2);
-    // zone === 'W' 的仓库存储架由 T4 建造（STORAGE_TABLE 已就位）
+    if (zone === 'W') buildStorage();
     rebuildGraph();   // 该区货架建造新增 collider → 边失效，全量重建（微秒级）
   }
 
@@ -1058,13 +1135,15 @@
       }
     }
     for (var k = 0; k < yard.length; k++) { if (!used[k]) return yard[k]; }
-    return yard[0];
+    return null;   // 满：调用方（shop 送达）改排队重试，绝不叠箱
   }
 
-  function spawnBox(pid) {
+  /* atPos 指定落点（存档回填存储位）；不指定则找空箱位，卸货区已满返回 null */
+  function spawnBox(pid, atPos) {
     var product = G.data.productById(pid);
     if (!product) return null;
-    var slotPos = freeYardSlot();
+    var slotPos = atPos || freeYardSlot();
+    if (!slotPos) return null;
 
     // 子件用局部坐标（原点=箱心），整箱位置只由 group.position 决定，玩家举箱时才能整体跟随相机
     var group = new THREE.Group();
@@ -1131,8 +1210,14 @@
     nav: nav,
     buildZone: buildZone,
     zoneOf: zoneOf,
+    storageSlots: storageSlots,
+    storeBox: storeBox,
+    takeBox: takeBox,
+    releaseStorageOf: releaseStorageOf,
     serializeShelves: serializeShelves,
     restoreShelves: restoreShelves,
+    serializeStorage: serializeStorage,
+    restoreStorage: restoreStorage,
     syncLayout: syncLayout,
     setCashierVisible: setCashierVisible,
     itemGeoFor: itemGeoFor,

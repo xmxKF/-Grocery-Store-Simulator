@@ -442,6 +442,15 @@
       return '[E] 搬起纸箱（' + bname + ' ×' + bx.itemsLeft + '）';
     }
 
+    // 空手时存储位不可交互：位上有箱时箱体自己是 box 交互，位空则无事可做
+    if (type === 'storage') {
+      if (!carrying) return null;
+      var stSlot = entry.data && entry.data.slot;
+      if (!stSlot) return null;
+      if (stSlot.box) return '此位已占用';
+      return '[E] 放入纸箱';
+    }
+
     if (type === 'trash') {
       if (!carrying) return null;
       if (carrying.itemsLeft > 0) return '箱内还有商品，无法丢弃';
@@ -496,6 +505,8 @@
       if (actionEdge) enterHoveredRegister(hovered);
     } else if (hovered.type === 'shutter') {
       if (actionEdge) tryBuyZone(hovered);
+    } else if (hovered.type === 'storage') {
+      if (actionEdge) storeCarriedBox(hovered);
     } else if (hovered.type === 'trash') {
       if (actionEdge && carrying.itemsLeft <= 0) discardBox();
     } else if (hovered.type === 'shelfSlot') {
@@ -528,9 +539,19 @@
     if (idx !== -1) list.splice(idx, 1);
   }
 
+  function storeCarriedBox(entry) {
+    var slot = entry.data && entry.data.slot;
+    var carrying = G.player.carrying;
+    if (!slot || !carrying || !G.world || !G.world.storeBox) return;
+    if (!G.world.storeBox(slot, carrying)) return;
+    G.player.carrying = null;
+    clearHover();   // 箱体随即盖住标记，必须还原标记的高亮缓存
+  }
+
   function pickUpBox(entry) {
     var box = entry.data && entry.data.box;
     if (!box || !box.mesh) return;
+    if (G.world && G.world.releaseStorageOf) G.world.releaseStorageOf(box);
     unhighlight(entry);
     removeInteractable(entry);
     G.player.carrying = box;   // {mesh, productId, itemsLeft, body, label}
