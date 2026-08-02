@@ -541,11 +541,12 @@
       cName.style.flex = '1';
       cRow.appendChild(cName);
 
-      if (G.state.cashier) {
+      // 逐台雇佣的 UI 随 T5 落地，本期仍只操作 R1
+      if (G.state.registers[0].staffed) {
         var fireBtn = el('button', 'btn btn-danger', '解雇');
         fireBtn.style.marginLeft = 'auto';
         fireBtn.addEventListener('click', function () {
-          G.shop.fireCashier();
+          G.shop.fireCashier(0);
           renderLicenseTab();
         });
         cRow.appendChild(fireBtn);
@@ -558,7 +559,7 @@
           hireBtn.title = '余额不足';
         }
         hireBtn.addEventListener('click', function () {
-          if (G.shop.hireCashier()) {
+          if (G.shop.hireCashier(0)) {
             toast('已雇佣收银员', 'ok');
             renderLicenseTab();
           }

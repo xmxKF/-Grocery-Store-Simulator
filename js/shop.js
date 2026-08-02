@@ -108,20 +108,46 @@
     return true;
   }
 
-  function hireCashier() {
-    if (G.state.level < 10) return false;
-    if (G.state.cashier) return false;
-    if (G.state.money < G.data.CONFIG.cashierHireCost) return false;
+  /* 区域扩建：卷帘门定义在 world.js（SHUTTERS），价格/等级门槛在此保一份，T5 迁入 CONFIG */
+  var ZONE_PRICES = { B: 1500, C: 3200, W: 900 };
+  var ZONE_LEVELS = { B: 5, C: 8, W: 3 };
 
-    G.addMoney(-G.data.CONFIG.cashierHireCost, 'cashier_hire');
-    G.state.cashier = true;
-    G.bus.emit('cashier', { hired: true });
+  function buyZone(z) {
+    if (!(z in ZONE_PRICES)) return false;
+    if (G.state.zones[z]) return false;
+    if (G.state.level < ZONE_LEVELS[z]) return false;
+    if (G.state.money < ZONE_PRICES[z]) return false;
+
+    G.addMoney(-ZONE_PRICES[z], 'zone');
+    G.world.buildZone(z);   // 幂等：自置位 zones[z] + 开门 + 除 collider + 建造该区设施
+    G.bus.emit('zone', { zone: z });
     return true;
   }
 
-  function fireCashier() {
-    G.state.cashier = false;
-    G.bus.emit('cashier', { hired: false });
+  function registerState(i) {
+    var list = G.state.registers || [];
+    return list[i | 0] || null;
+  }
+
+  function hireCashier(i) {
+    var r = registerState(i);
+    if (!r) return false;
+    if (G.state.level < 10) return false;
+    if (!r.owned) return false;
+    if (r.staffed) return false;
+    if (G.state.money < G.data.CONFIG.cashierHireCost) return false;
+
+    G.addMoney(-G.data.CONFIG.cashierHireCost, 'cashier_hire');
+    r.staffed = true;
+    G.bus.emit('cashier', { hired: true, index: i | 0 });
+    return true;
+  }
+
+  function fireCashier(i) {
+    var r = registerState(i);
+    if (!r) return;
+    r.staffed = false;
+    G.bus.emit('cashier', { hired: false, index: i | 0 });
   }
 
   G.shop = {
@@ -129,6 +155,7 @@
     update: update,
     setPrice: setPrice,
     buyLicense: buyLicense,
+    buyZone: buyZone,
     hireCashier: hireCashier,
     fireCashier: fireCashier,
     isUnlocked: isUnlocked

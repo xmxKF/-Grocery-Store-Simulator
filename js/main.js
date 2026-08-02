@@ -177,7 +177,7 @@
     G.customers.reset();
     G.ui.showScreen(null);
     refreshHud();
-    G.world.setCashierVisible(G.state.cashier);
+    syncCashiers();
     G.ui.toast('备货阶段：Tab 开电脑订货，按 O 开门营业');
   }
 
@@ -198,8 +198,14 @@
     G.world.syncLayout();
   }
 
+  /* 新游戏 / 读档后按 G.state.registers[i].staffed 逐台同步一次站桩 */
+  function syncCashiers() {
+    var regs = G.state.registers || [];
+    for (var i = 0; i < regs.length; i++) G.world.setCashierVisible(i, regs[i].staffed);
+  }
+
   function onCashierChanged(payload) {
-    G.world.setCashierVisible(payload.hired);
+    G.world.setCashierVisible(payload.index | 0, payload.hired);
   }
 
   /* ---------------------------------------------------------------
@@ -244,10 +250,13 @@
 
     var cfg = G.data.CONFIG;
     var racks = countRacks();
+    var staffed = 0;
+    var regStates = G.state.registers || [];
+    for (var ri = 0; ri < regStates.length; ri++) if (regStates[ri].staffed) staffed++;
     var rent = (G.state.level >= 8 ? 80 : cfg.rentPerDay)          // Lv8 扩建后房租翻倍
       + racks.shelfGroups * cfg.utilPerShelf
       + racks.fridges * cfg.utilPerFridge
-      + (G.state.cashier ? cfg.cashierWage : 0);
+      + staffed * cfg.cashierWage;
     rent = round2(rent);
 
     var ds = G.state.dayStats;
@@ -333,13 +342,18 @@
       }
       return done ? done() : true;
     }
-    function currentTx() { return G.checkout._test.tx(); }
+    function currentTx() { return G.checkout._test.tx(0); }
     function serveTx() {
-      var t = currentTx();
-      if (!t || t.phase !== 'ready') return;
-      G.checkout._test.scanAll();
-      withRandom(0.1, function () { G.checkout._test.settle(); });   // 0.1 < 0.55 → 刷卡
-      G.checkout._test.payCard();
+      var regs = G.checkout._test.registers();
+      for (var i = 0; i < regs.length; i++) {
+        var t = G.checkout._test.tx(i);
+        if (!t || t.phase !== 'ready') continue;
+        G.checkout._test.scanAll(i);
+        withRandom(0.1, (function (k) {                              // 0.1 < 0.55 → 刷卡
+          return function () { G.checkout._test.settle(k); };
+        })(i));
+        G.checkout._test.payCard(i);
+      }
     }
 
     try {
@@ -348,7 +362,7 @@
 
       ck('boot.scene', !!scene && !!camera && G.world.slots.length === 24, '格位 ' + G.world.slots.length);
       ck('boot.nav', !!G.world.nav.entry && G.world.nav.registers.length >= 1 &&
-        G.world.nav.registers[0].queueSpots.length === 5 && G.world.nav.aisleSpots.length === 4,
+        G.world.nav.registers[0].queueSpots.length === 4 && G.world.nav.aisleSpots.length === 4,
         'aisle ' + G.world.nav.aisleSpots.length + ' / 收银台 ' + G.world.nav.registers.length);
       ck('boot.state', G.state.money === 800 && G.state.day === 1 && G.state.level === 1, G.fmt(G.state.money));
 
@@ -384,6 +398,18 @@
         }
       }
       ck('nav.pathClear', clearOk, '路径各段不得穿 collider');
+
+      /* --- C-T3 多收银台 --- */
+      var regs = G.checkout._test.registers();
+      var f0 = G.checkout._test.frame(0);
+      ck('checkout.perRegisterFrame', regs.length >= 1 && !!f0 &&
+        Math.abs(f0.origin.x - G.world.registers[0].front.x) < 1.2 &&
+        Math.abs(f0.origin.z - 7.6) < 1.2,
+        'R1 frame.origin 必须落在自家柜台（' + (f0 && f0.origin.x.toFixed(2)) + ',' + (f0 && f0.origin.z.toFixed(2)) + '）');
+      ck('checkout.shortestQueue', typeof G.checkout.joinQueue === 'function', 'joinQueue 存在（多台分流逻辑生效）');
+      var bzBefore = G.state.money;
+      ck('shop.buyZoneGates', G.shop.buyZone('B') === false && G.state.money === bzBefore,
+        'Lv1 买区域 B 必须被等级门槛拒绝且不扣钱');
 
       /* --- 订货 --- */
       var m0 = G.state.money;
@@ -702,7 +728,7 @@
         });
         return { group: found, n: n };
       }
-      G.world.setCashierVisible(true);
+      G.world.setCashierVisible(0, true);
       var cf = findCashierGroup();
       var cfMeshes = 0, cfShirtOk = false;
       if (cf.group) cf.group.traverse(function (o) {
@@ -722,9 +748,9 @@
       }
       ck('world.cashierFits', cfGeomOk,
         cf.group ? ('旋转与包络须卡进 0.8m 员工通道：z[' + cfBox.min.z.toFixed(3) + ',' + cfBox.max.z.toFixed(3) + ']') : '无站桩组');
-      G.world.setCashierVisible(true);
+      G.world.setCashierVisible(0, true);
       ck('world.cashierIdempotent', findCashierGroup().n === 1, '重复 setVisible(true) 不得复制');
-      G.world.setCashierVisible(false);
+      G.world.setCashierVisible(0, false);
       ck('world.cashierRemoved', findCashierGroup().n === 0, 'setVisible(false) 应移除');
 
       /* --- 上架飞行动画（Task 5）--- */
@@ -911,7 +937,13 @@
       }
       ck('nav.fullOpenConnected', navAllOk, navBad || '全开态 entry→全部关键点可寻路');
 
-      G.world.setCashierVisible(true);
+      /* C-T3：B/C 开区后 R2/R3 必须已建造并被 checkout 接管 */
+      ck('checkout.threeRegisters',
+        G.world.registers.length === 3 && G.checkout._test.registers().length === 3 &&
+        G.state.registers[1].owned === true && G.state.registers[2].owned === true,
+        '世界台 ' + G.world.registers.length + ' / checkout 台 ' + G.checkout._test.registers().length);
+
+      G.world.setCashierVisible(0, true);
       /* 轮转灌店：外层轮次、内层商品 → 逼出 ≤24 组实例池上限（顺序灌店只会建 2 组） */
       var fillGuard = 0, filled = true;
       while (filled && fillGuard < 5000) {

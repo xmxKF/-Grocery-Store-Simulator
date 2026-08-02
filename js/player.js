@@ -425,6 +425,14 @@
     if (type === 'computer') return '[E] 打开订货电脑';
     if (type === 'register') return '[E] 进入收银台';
 
+    if (type === 'shutter') {
+      var sd = entry.data || {};
+      if (G.state.zones && G.state.zones[sd.zone]) return null;   // 已开放
+      if (G.state.level < sd.lv) return '需 Lv' + sd.lv + ' 才能开放' + sd.label;
+      if (G.state.money < sd.price) return '资金不足：开放' + sd.label + '需 ' + G.fmt(sd.price);
+      return '[E] 开放' + sd.label + '（' + G.fmt(sd.price) + ' · 需 Lv' + sd.lv + '）';
+    }
+
     if (type === 'box') {
       if (carrying) return null;
       var bx = entry.data && entry.data.box;
@@ -477,20 +485,39 @@
       if (!actionEdge) return;
       if (hovered.type === 'box') pickUpBox(hovered);
       else if (hovered.type === 'computer') { if (G.ui) G.ui.showScreen('computer'); }
-      else if (hovered.type === 'register') { if (G.checkout) G.checkout.enterRegister(); }
+      else if (hovered.type === 'register') enterHoveredRegister(hovered);
+      else if (hovered.type === 'shutter') tryBuyZone(hovered);
       return;
     }
 
     if (hovered.type === 'computer') {
       if (actionEdge && G.ui) G.ui.showScreen('computer');
     } else if (hovered.type === 'register') {
-      if (actionEdge && G.checkout) G.checkout.enterRegister();
+      if (actionEdge) enterHoveredRegister(hovered);
+    } else if (hovered.type === 'shutter') {
+      if (actionEdge) tryBuyZone(hovered);
     } else if (hovered.type === 'trash') {
       if (actionEdge && carrying.itemsLeft <= 0) discardBox();
     } else if (hovered.type === 'shelfSlot') {
       if (actionHeld && stockCooldown <= 0 && carrying.itemsLeft > 0) {
         tryPlaceItem(hovered);
       }
+    }
+  }
+
+  function enterHoveredRegister(entry) {
+    if (!G.checkout) return;
+    G.checkout.enterRegister(entry.data && entry.data.register);
+  }
+
+  function tryBuyZone(entry) {
+    var d = entry.data || {};
+    if (!G.shop || !G.shop.buyZone) return;
+    if (G.shop.buyZone(d.zone)) {
+      if (G.ui && G.ui.toast) G.ui.toast('已开放' + d.label, 'ok');
+      clearHover();   // 卷帘门 mesh 随即隐藏，高亮缓存必须还原
+    } else if (G.ui && G.ui.toast) {
+      G.ui.toast(computePrompt(entry) || '暂时无法开放', 'danger');
     }
   }
 

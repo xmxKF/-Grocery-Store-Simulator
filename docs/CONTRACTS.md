@@ -92,12 +92,12 @@ G.world.itemGeoFor(pid)   // -> BufferGeometry（品类基础形，T3 前恒为 
 G.world.itemMatFor(pid)   // -> Material（per-pid，T3 起含 labelBand 贴图）
 G.world.getStockCount(pid)
 G.world.spawnBox(pid, atPos /*可选 Vector3；省略走 activeYard 空位，满则返回 null*/)   // 生成纸箱实体 {mesh, productId, itemsLeft}，注册为可交互
-G.world.registerInteractable(obj3D, {type, data, prompt})   // type: 'box'|'shelfSlot'|'computer'|'register'|'trash'
+G.world.registerInteractable(obj3D, {type, data, prompt})   // type: 'box'|'shelfSlot'|'computer'|'register'|'trash'|'shutter'（shutter.data = {zone, price, lv, label}）
 G.world.interactables             // 供 player 射线检测（含 mesh 引用）
 G.world.colliders                 // [{minX,maxX,minZ,maxZ}] 供 player/顾客做 AABB 限制
-G.world.nav = { entry, exit, aisleSpots:[Vector3], queueSpots:[Vector3 x5]/*废弃，由 nav.registers 取代——T3 落地时删*/, registerFront/*废弃，同上——T3 落地时删*/ }
+G.world.nav = { entry, exit, aisleSpots:[Vector3], registers /*= G.world.registers 同引用*/ }   // 旧 queueSpots/registerFront 已于 T3 删除
 G.world.serializeShelves() / G.world.restoreShelves(data)
-G.world.registers   // [{index, mesh, beltMesh, front:Vector3, queueSpots:[Vector3×5], zone}]（按区域解锁惰性建造）
+G.world.registers   // [{index, mesh, beltMesh, front:Vector3, queueSpots:[Vector3×4], zone}]（按区域解锁惰性建造）
 G.world.storageSlots // [{id, pos, marker, box:null|箱}]（仓库购买后建造，24 位）
 G.world.storeBox(slot, box) /*->bool*/  G.world.takeBox(slot) /*->box|null*/
 G.world.buildZone(z /*'B'|'C'|'W'*/)   // 幂等；自置位 zones[z]+开门+除collider+启用节点+建造该区设施
@@ -115,7 +115,7 @@ G.player.setPose(pose)          // 设定玩家位姿并立即同步到相机；
 ```
 - 点击 canvas 进入 Pointer Lock；WASD 移动（用 G.world.colliders 做 AABB 碰撞）；`'screen'` 事件打开界面时释放锁并忽略输入。
 - 准星射线 ≤3m 命中 interactable → `G.bus.emit('hover',{prompt})`；未命中发 `{prompt:null}`。
-- 按 E / 左键：box→捡起；持箱对 shelfSlot→放 1 件（调 `G.world.addItem`，箱空自动变垃圾提示）；对 trash→丢弃箱子；computer→`G.ui.showScreen('computer')`；register→`G.checkout.enterRegister(entry.data.register)`。
+- 按 E / 左键：box→捡起；持箱对 shelfSlot→放 1 件（调 `G.world.addItem`，箱空自动变垃圾提示）；对 trash→丢弃箱子；computer→`G.ui.showScreen('computer')`；register→`G.checkout.enterRegister(entry.data.register)`；shutter→`G.shop.buyZone(entry.data.zone)`（提示由 computePrompt 按等级/资金生成，失败 toast 原因）。
 - Tab 也可开电脑；Esc 关界面/释放锁。
 - `G.checkout.inRegister` 为真时 player 完全让出相机控制权，位姿由 checkout 显式还原（不再由 player 从相机反推）。
 
@@ -144,13 +144,13 @@ G.customers.buildFigure(opts /*{shirt?,pants?,skin?,hair?,hairStyle?,h?,w?} 省�
 ### G.checkout（checkout.js）
 ```js
 G.checkout.init(scene, camera)   // main.js 启动时调用，记下 scene/camera 引用
-G.checkout.joinQueue(c); G.checkout.queue
-G.checkout.enterRegister(reg)   // 玩家进入收银模式：锁视角朝传送带，POS 面板(#pos)显示；已占别台时忽略并 prompt「先退出当前收银台」
+G.checkout.joinQueue(c)   // 队列改为逐台私有（reg.queue），单例 G.checkout.queue 于 T3 移除
+G.checkout.enterRegister(reg)   // reg 可为 G.world.registers 项 / 省略（默认首台）；玩家进入收银模式：锁视角朝传送带，POS 面板(#pos)显示；已占别台时忽略并 toast「先退出当前收银台」
 G.checkout.exitRegister()
 G.checkout.update(dt)
 G.checkout.stance   // null | {pos: THREE.Vector3, yaw: Number, pitch: Number}（只读，供自测断言）
 G.checkout.activeRegisterId   // 只读；玩家当前所在台 index，未进入时 null
-G.checkout._test    // 自测钩子：tx(i=0)/scanAll(i=0)/settle(i=0)/payCard(i=0)/registers()，i 缺省 0，仅 ?selftest 使用
+G.checkout._test    // 自测钩子：tx(i=0)/scanAll(i=0)/settle(i=0)/payCard(i=0)/frame(i=0)/registers()，i 缺省 0，仅 ?selftest 使用
 ```
 - `joinQueue(c)`：在已建收银台中选 `queue.length` 最小者入队（并列取低 index），全部满则返回 false。
 - 队首顾客把商品放上传送带（小 mesh 排开）；玩家逐件点击扫码（总价累计显示于 #pos）。
@@ -192,6 +192,7 @@ G.clamp(v, a, b)
 - `'toggleOpen'` {}：player 按 `O` 时 emit；**main.js** 处理开门/打烊逻辑。
 - `'nextDay'` {}：ui 日结算按钮 emit；**main.js** 处理进入次日 + `G.save()`。
 - `'license'` {cat}：shop.buyLicense 成功后 emit。
+- `'zone'` {zone}：shop.buyZone 成功后 emit（扣款与 `G.world.buildZone` 之后）。
 - **G.world.syncLayout()**：幂等；读取 `G.state.zones`、`G.state.level` 与 `G.state.licenses`，把已开放区域的货架/冷藏柜补齐到 GDD §4 区域表的目标状态。main.js 在 `'levelup'`、`'license'`、读档后调用。
 - `#pos` 内部 DOM 由 **checkout.js** 全权构建（用上面共享类名）；其余 screen 的 DOM 由 ui.js 构建。
 - 时钟显示：ui.js 自行以 ~4Hz 轮询 `G.state.clock/open` 刷新，不设事件。

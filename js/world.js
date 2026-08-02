@@ -57,7 +57,10 @@
     { index: 2, x: 10, zone: 'C' }
   ];
   var REGISTER_Z = 7.6;
-  // front=(x, 0, 6.8)；queueSpots z = 6.2, 5.6, 5.0, 4.4, 3.8（沿 -z 排）
+  // front=(x, 0, 6.8)；queueSpots z = 6.3, 5.8, 5.3, 4.8（沿 -z 排，共 4 位）
+  // 末位 4.8 距 z=4 内墙的膨胀带（3.35..4.65）留 0.15m，四位全部可寻路——
+  // 旧表末两位 4.4/3.8 埋在膨胀带里，nearestNode 只能降级走穿墙直线（C-T2 实证）
+  var QUEUE_ZS = [6.3, 5.8, 5.3, 4.8];
 
   /* 仓库存储位：单层地面网格 6 列 × 4 排 = 24 位 */
   var STORAGE_XS = [-14.9, -13.7, -12.5, -11.3, -10.1, -8.9];
@@ -352,7 +355,7 @@
   var colliders = [];
   var registers = [];
   var shutterMeshes = [];
-  var nav = { entry: null, exit: null, aisleSpots: [], registers: registers, queueSpots: [], registerFront: null };
+  var nav = { entry: null, exit: null, aisleSpots: [], registers: registers };
 
   // ---- C-T2 走廊节点图（从布局表推导；Dijkstra；门控 = node.enabled）----
   var navNodes = [];
@@ -518,8 +521,7 @@
     return out;
   }
 
-  var cashierGroup = null;
-  var cashierVisible = false;
+  var cashierGroups = [];   // index → 站桩 Group（逐台惰性构造）
 
   function registerInteractable(obj3D, opts) {
     var entry = { mesh: obj3D, type: opts.type, data: opts.data || {}, prompt: opts.prompt || '' };
@@ -674,9 +676,6 @@
     nav.entry = new THREE.Vector3(15.2, 0, 5.3);
     // 出口在门外人行道（GDD §6.5 顾客「从 nav.exit 走出」），避开 YARD_EAST 的箱位
     nav.exit = new THREE.Vector3(18, 0, 5.3);
-    // 废弃字段：指向 R1 的等价值，让 checkout 的单台代码继续工作——T3 重构后删除
-    nav.registerFront = registers[0].front;
-    nav.queueSpots = registers[0].queueSpots;
     nav.findPath = findPath;
     nav.rebuildGraph = rebuildGraph;
     nav._segBlocked = segBlocked;
@@ -697,10 +696,11 @@
     colliders.push({ minX: def.x - 1.0, maxX: def.x + 1.0, minZ: REGISTER_Z - 0.6, maxZ: REGISTER_Z + 0.6 });
     var front = new THREE.Vector3(def.x, 0, 6.8);
     var spots = [];
-    [6.2, 5.6, 5.0, 4.4, 3.8].forEach(function (z) { spots.push(new THREE.Vector3(def.x, 0, z)); });
+    QUEUE_ZS.forEach(function (z) { spots.push(new THREE.Vector3(def.x, 0, z)); });
     var reg = { index: i, mesh: body, beltMesh: belt, front: front, queueSpots: spots, zone: def.zone };
     // registers 与 nav.registers 是同一个数组（模块级同源同引用），只推一次
     registers.push(reg);
+    if (G.state && G.state.registers && G.state.registers[i]) G.state.registers[i].owned = true;
     registerInteractable(body, { type: 'register', data: { register: reg }, prompt: '[E] 进入收银台' });
     return reg;
   }
@@ -750,9 +750,9 @@
 
   // ---------------------------------------------------------------
   // 收银员站桩（GDD §9 / CONTRACTS.md setCashierVisible）
-  // 复用顾客 9 件构造（G.customers.buildFigure），固定形象；站在 R1 柜台南侧的
+  // 复用顾客 9 件构造（G.customers.buildFigure），固定形象；站在本台柜台南侧的
   // 0.8m 员工通道内（躯干 0.234 / 鞋 0.22 / 短块发 0.29 的进深沿 z 轴），面朝 -z 的顾客方向。
-  function buildCashierFigure() {
+  function buildCashierFigure(reg) {
     var body = G.customers.buildFigure({
       shirt: '#4C9BE8',   // CONTRACTS：制服固定色
       pants: '#2E3742',
@@ -762,21 +762,25 @@
       h: 1.0, w: 1.0
     });
     var group = body.group;
-    group.position.set(REGISTER_TABLE[0].x, 0, 8.55);
+    group.position.set(reg.front.x, 0, 8.55);
     group.rotation.y = Math.PI;   // 面朝 -z：传送带 / 排队方向
     return group;
   }
 
-  function setCashierVisible(visible) {
+  /* 幂等；index 指定收银台（未建造的台静默忽略） */
+  function setCashierVisible(index, visible) {
+    var i = index | 0;
     visible = !!visible;
-    if (visible === cashierVisible) return;
+    var group = cashierGroups[i] || null;
+    if (visible === !!(group && group.parent)) return;
     if (visible) {
-      if (!cashierGroup) cashierGroup = buildCashierFigure();
-      if (sceneRef) sceneRef.add(cashierGroup);
-    } else if (cashierGroup && cashierGroup.parent) {
-      cashierGroup.parent.remove(cashierGroup);
+      var reg = registerAt(i);
+      if (!reg) return;
+      if (!group) { group = buildCashierFigure(reg); cashierGroups[i] = group; }
+      if (sceneRef) sceneRef.add(group);
+    } else if (group && group.parent) {
+      group.parent.remove(group);
     }
-    cashierVisible = visible;
   }
 
   // ---------------------------------------------------------------

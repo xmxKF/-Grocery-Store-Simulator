@@ -60,7 +60,8 @@
     licenses: ['食品', '饮料'],
     clock: 0,
     open: false,
-    cashier: false,
+    // owned = 该台已建造（world.buildRegister 置位）；staffed = 已雇收银员
+    registers: [{ owned: false, staffed: false }, { owned: false, staffed: false }, { owned: false, staffed: false }],
     zones: { A: true, B: false, C: false, W: false },
     negDays: 0,   // 连续日结算余额为负的天数（GDD §8 连续 3 天 → 游戏结束）
     dayStats: { revenue: 0, cogs: 0, customers: 0, itemsSold: 0 }
@@ -93,7 +94,7 @@
         level: G.state.level,
         prices: G.state.prices,
         licenses: G.state.licenses,
-        cashier: G.state.cashier,
+        cashier: !!G.state.registers[0].staffed,   // v1 存档格式保持不变；多台雇佣随 T6 的 v2 存档落地
         negDays: G.state.negDays,
         shelves: (G.world && G.world.serializeShelves) ? G.world.serializeShelves() : null
       };
@@ -114,7 +115,7 @@
       G.state.level = data.level;
       G.state.prices = data.prices;
       G.state.licenses = data.licenses;
-      G.state.cashier = data.cashier;
+      G.state.registers[0].staffed = !!data.cashier;
       G.state.negDays = data.negDays || 0;
       // 先按读回的 level/licenses 补齐货架，再恢复格位内容，否则高等级新增格位的存档会丢失
       if (G.world && G.world.syncLayout) G.world.syncLayout();
