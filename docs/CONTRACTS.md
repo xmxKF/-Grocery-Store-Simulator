@@ -7,7 +7,7 @@
   - r128 注意：无 `CapsuleGeometry`（顾客身体用 Box/Cylinder 拼），用 `BoxGeometry`/`MeshLambertMaterial`/flat color。
 - 无构建步骤、无 ES modules、运行时零网络请求。双击 `index.html`（file://）即可玩。
 - 每个 js 文件用 IIFE + `'use strict'`，只向全局命名空间 `window.G` 挂自己的模块。
-- 游戏内 UI 文本一律**简体中文**。存档 key：`localStorage['gss-save-v1']`。
+- 游戏内 UI 文本一律**简体中文**。存档 key：`localStorage['gss-save-v2']`（结构见 G.state 段「存档」条款）；`gss-save-v1` 保留供一次性迁移读取。
 
 ## 文件清单与归属
 | 文件 | 归属 agent |
@@ -49,7 +49,7 @@ G.bus.on(evt, fn); G.bus.off(evt, fn); G.bus.emit(evt, payload /*单个对象*/)
 - `G.data.productById(id)`
 
 ### G.state（state.js）
-字段：`money, day, xp, level, prices{pid:number}, licenses[cat], clock(0..dayLengthSec), open:boolean, dayStats{revenue,cogs,customers,itemsSold}`
+字段：`money, day, xp, level, prices{pid:number}, licenses[cat], clock(0..dayLengthSec), open:boolean, dayStats{revenue,cogs,customers,itemsSold}, zones:{A,B,C,W}, registers:[{owned,staffed}×3]`（`cashier` 字段废弃，仅迁移期兼容读）
 API：
 ```js
 G.addMoney(delta, reason)   // 更新+emit('money')；不做负数校验之外的魔法
@@ -57,6 +57,15 @@ G.addXP(n)                  // 处理升级，emit('xp'/'levelup')
 G.save(); G.load() /*->bool*/; G.resetSave()
 // save() 内部调用 G.world.serializeShelves() / 恢复时调用 G.world.restoreShelves(data)
 ```
+存档结构 `gss-save-v2`（照录）：
+```js
+{ v:2, money, day, xp, level, prices, licenses, negDays,
+  zones:{A:true,B:false,C:false,W:false},
+  registers:[{owned,staffed}×3],
+  shelves:[{id,productId,count}], storage:[{id,pid,left}] }
+```
+- 读取分流：优先 `gss-save-v2`；无则读 `gss-save-v1` → `migrateV1`：继承 money/day/xp/level/prices/licenses/negDays；`cashier → registers[0].staffed`；zones 全锁（仅 A）；shelves 不继承 → 按进价全额折现入 money；首次 save 写 v2；**v1 键保留不删**。
+- `resetSave()`：**双键清除**（`gss-save-v1` 与 `gss-save-v2` 一并删除）。
 
 ### G.tex（textures.js）
 ```js
@@ -82,14 +91,19 @@ G.world.updateBoxVisual(box)  // 幂等；按 box.itemsLeft 切换满/空材质�
 G.world.itemGeoFor(pid)   // -> BufferGeometry（品类基础形，T3 前恒为 0.16×0.22×0.16 Box）（契约：所有基础几何基面恰在 y=0，非居中——摆放/飞行/传送带偏移全押在此上）
 G.world.itemMatFor(pid)   // -> Material（per-pid，T3 起含 labelBand 贴图）
 G.world.getStockCount(pid)
-G.world.spawnBox(pid)             // 卸货区生成纸箱实体 {mesh, productId, itemsLeft}，注册为可交互
+G.world.spawnBox(pid, atPos /*可选 Vector3；省略走 activeYard 空位，满则返回 null*/)   // 生成纸箱实体 {mesh, productId, itemsLeft}，注册为可交互
 G.world.registerInteractable(obj3D, {type, data, prompt})   // type: 'box'|'shelfSlot'|'computer'|'register'|'trash'
 G.world.interactables             // 供 player 射线检测（含 mesh 引用）
 G.world.colliders                 // [{minX,maxX,minZ,maxZ}] 供 player/顾客做 AABB 限制
-G.world.nav = { entry, exit, aisleSpots:[Vector3], queueSpots:[Vector3 x5], registerFront }
+G.world.nav = { entry, exit, aisleSpots:[Vector3], queueSpots:[Vector3 x5]/*废弃，由 nav.registers 取代——T3 落地时删*/, registerFront/*废弃，同上——T3 落地时删*/ }
 G.world.serializeShelves() / G.world.restoreShelves(data)
+G.world.registers   // [{index, mesh, beltMesh, front:Vector3, queueSpots:[Vector3×5], zone}]（按区域解锁惰性建造）
+G.world.storageSlots // [{id, pos, marker, box:null|箱}]（仓库购买后建造，24 位）
+G.world.storeBox(slot, box) /*->bool*/  G.world.takeBox(slot) /*->box|null*/
+G.world.buildZone(z /*'B'|'C'|'W'*/)   // 幂等；开门+除collider+启用节点+建造该区设施
 ```
-店内布局保证：入口→过道→货架→收银台之间为直线可达（顾客走 waypoint 直线，无需寻路）。
+店内寻路：`G.world.nav.findPath(from, to) -> [Vector3]`（走廊节点图 + Dijkstra；未解锁区域节点禁用，
+不可达返回 []）。顾客经 findPath 折线移动，互不碰撞可穿过；玩家与员工不寻路。
 
 ### G.player（player.js）
 ```js
@@ -101,7 +115,7 @@ G.player.setPose(pose)          // 设定玩家位姿并立即同步到相机；
 ```
 - 点击 canvas 进入 Pointer Lock；WASD 移动（用 G.world.colliders 做 AABB 碰撞）；`'screen'` 事件打开界面时释放锁并忽略输入。
 - 准星射线 ≤3m 命中 interactable → `G.bus.emit('hover',{prompt})`；未命中发 `{prompt:null}`。
-- 按 E / 左键：box→捡起；持箱对 shelfSlot→放 1 件（调 `G.world.addItem`，箱空自动变垃圾提示）；对 trash→丢弃箱子；computer→`G.ui.showScreen('computer')`；register→`G.checkout.enterRegister()`。
+- 按 E / 左键：box→捡起；持箱对 shelfSlot→放 1 件（调 `G.world.addItem`，箱空自动变垃圾提示）；对 trash→丢弃箱子；computer→`G.ui.showScreen('computer')`；register→`G.checkout.enterRegister(entry.data.register)`。
 - Tab 也可开电脑；Esc 关界面/释放锁。
 - `G.checkout.inRegister` 为真时 player 完全让出相机控制权，位姿由 checkout 显式还原（不再由 player 从相机反推）。
 
@@ -110,7 +124,8 @@ G.player.setPose(pose)          // 设定玩家位姿并立即同步到相机；
 G.shop.orderBoxes(cart /*[{pid,qty}]*/) /*->bool 整单校验+扣钱，deliverySec 后逐箱 spawnBox + emit('delivery')*/
 G.shop.setPrice(pid, price)      // 写入 G.state.prices
 G.shop.buyLicense(cat) /*->bool 成功后 emit('license')*/
-G.shop.hireCashier() /*->bool Lv10、¥200*/  G.shop.fireCashier()
+G.shop.buyZone(z) /*->bool 等级+金钱双校验*/
+G.shop.hireCashier(i) /*->bool Lv10、¥200*/  G.shop.fireCashier(i)
 G.shop.update(dt)                // 推进配送计时
 G.shop.isUnlocked(pid) /*->bool 等级+许可证*/
 ```
@@ -124,17 +139,18 @@ G.customers.buildFigure(opts /*{shirt?,pants?,skin?,hair?,hairStyle?,h?,w?} 省�
 - 营业中按 GDD 频率生成；FSM：`entering→shopping(逐个货架取货)→queueing→paying→leaving`。
 - 购物清单只从"已上架且已解锁"商品生成；对每件按 GDD 容忍度公式决定买/嫌贵放弃（嫌贵 emit toast 事件可选）。
 - 拿货调 `G.world.removeItem`；排队用 `G.checkout.joinQueue(c)`；patienceSec 超时 → 弃购离店 emit `'customerLeft'` {angry:true}。
-- 移动=朝 waypoint 匀速 lerp；身体低多边形随机色。
+- 移动=按 `G.world.nav.findPath` 折线折点匀速 lerp；身体低多边形随机色。
 
 ### G.checkout（checkout.js）
 ```js
 G.checkout.init(scene, camera)   // main.js 启动时调用，记下 scene/camera 引用
 G.checkout.joinQueue(c); G.checkout.queue
-G.checkout.enterRegister()   // 玩家进入收银模式：锁视角朝传送带，POS 面板(#pos)显示
+G.checkout.enterRegister(reg)   // 玩家进入收银模式：锁视角朝传送带，POS 面板(#pos)显示；已占别台时忽略并 prompt「先退出当前收银台」
 G.checkout.exitRegister()
 G.checkout.update(dt)
 G.checkout.stance   // null | {pos: THREE.Vector3, yaw: Number, pitch: Number}（只读，供自测断言）
-G.checkout._test    // 自测钩子（ease/tx/scanAll/settle/payCard），仅 ?selftest 使用
+G.checkout.activeRegisterId   // 只读；玩家当前所在台 index，未进入时 null
+G.checkout._test    // 自测钩子：tx(i=0)/scanAll(i=0)/settle(i=0)/payCard(i=0)/registers()，i 缺省 0，仅 ?selftest 使用
 ```
 - 队首顾客把商品放上传送带（小 mesh 排开）；玩家逐件点击扫码（总价累计显示于 #pos）。
 - 扫完 → 付款：现金（显示顾客给的钞票，玩家从零钱面板点选找零，找错多找的部分损失）或刷卡（点读卡器直接成交）。
@@ -178,9 +194,9 @@ G.clamp(v, a, b)
 - **G.world.syncLayout()**：幂等；读取 `G.state.level` 与 `G.state.licenses`，把货架/冷藏柜/扩建补齐到 GDD §4 表的目标状态。main.js 在 `'levelup'`、`'license'`、读档后调用。
 - `#pos` 内部 DOM 由 **checkout.js** 全权构建（用上面共享类名）；其余 screen 的 DOM 由 ui.js 构建。
 - 时钟显示：ui.js 自行以 ~4Hz 轮询 `G.state.clock/open` 刷新，不设事件。
-- 收银员状态存 `G.state.cashier`（boolean）；自动收银逻辑在 checkout.js。
-- `'cashier'` {hired:boolean}：shop.hireCashier/fireCashier 成功后 emit；main.js 监听并调用 `G.world.setCashierVisible(hired)`，且在新游戏/读档后按 `G.state.cashier` 同步一次。
-- **G.world.setCashierVisible(visible)**：幂等；在收银台后侧放置/移除一个站桩低多边形收银员（体型同顾客规格，制服固定 `#4C9BE8`，不注册交互、不参与碰撞）（自收银员美术升级起字面为真：经 `G.customers.buildFigure` 构造）。
+- 收银员状态存 `G.state.registers[i].staffed`；`G.state.cashier` 废弃（仅迁移期兼容读）；自动收银逻辑在 checkout.js。
+- `'cashier'` {hired, index}：shop.hireCashier(i)/fireCashier(i) 成功后 emit；main.js 监听并按 index 调用对应台的站桩显隐，且在新游戏/读档后按 `G.state.registers[i].staffed` 逐台同步一次。
+- **G.world.setCashierVisible(index, visible)**：幂等；在指定收银台（`registers[index]`）后侧放置/移除一个站桩低多边形收银员（体型同顾客规格，制服固定 `#4C9BE8`，不注册交互、不参与碰撞）（自收银员美术升级起字面为真：经 `G.customers.buildFigure` 构造）。
 - 日终判定：main.js 检测 `clock 走完 && G.customers.active.length === 0`。
 - **上架飞行动画由 `world.js` 自行在内部 `requestAnimationFrame` 中驱动**，不接入 `main.js` 主循环的 dt。理由：与现有 `popInItem` 的驱动方式一致；飞行是纯视觉表现，与游戏逻辑解耦——`addItem` 返回时商品在逻辑上已在格内。
 - **价签贴图按 `(productId, price, state)` 三元组缓存 `CanvasTexture` 并复用；但每个价签持有各自的 `Material` 实例**，否则准星高亮会让同商品的所有价签一起发光。
