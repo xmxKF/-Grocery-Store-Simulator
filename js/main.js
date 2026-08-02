@@ -678,6 +678,16 @@
       });
       ck('world.cashierFigure', cf.n === 1 && cfMeshes === 9 && cfShirtOk,
         '站桩组 ' + cf.n + ' 个，mesh ' + cfMeshes + '（应 9），制服色命中 ' + cfShirtOk);
+      var cfBox = null;
+      var cfGeomOk = false;
+      if (cf.group) {
+        cf.group.updateMatrixWorld(true);
+        cfBox = new THREE.Box3().setFromObject(cf.group);
+        cfGeomOk = Math.abs(cf.group.rotation.y - Math.PI / 2) < 1e-6 &&
+          cfBox.min.x >= -7.9 && cfBox.max.x <= -7.6;
+      }
+      ck('world.cashierFits', cfGeomOk,
+        cf.group ? ('旋转与包络须卡进 0.3m 空隙：x[' + cfBox.min.x.toFixed(3) + ',' + cfBox.max.x.toFixed(3) + ']') : '无站桩组');
       G.world.setCashierVisible(true);
       ck('world.cashierIdempotent', findCashierGroup().n === 1, '重复 setVisible(true) 不得复制');
       G.world.setCashierVisible(false);

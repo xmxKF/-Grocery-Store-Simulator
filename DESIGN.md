@@ -159,7 +159,7 @@ cast / receive 矩阵：
 
 【红线】墙与天花板 castShadow 恒为 false（无窗室内，壳体投影 = 全店漆黑，headless 自测无法发现，只能靠断言 shadow.shellNoCast 防守）。
 
-阴影 pass ≈139 个深度 draw（按 §5.8 新分项：racks 50 + 顾客 14×4=56 + 收银员 4 + 纸箱 24 + 房间设施 5，货架玻璃/价签/命中盒/InstancedMesh 商品/顾客发型臂鞋/箱标签均不投影），总提交 ≈641（502 主渲染 + 139 阴影深度），中配预算内。lowfx：`shadowMap.enabled=false` 一个布尔。
+阴影 pass ≈139 个深度 draw（按 §5.8 新分项：racks 50 + 顾客 14×4=56 + 收银员 4 + 纸箱 24 + 房间设施 5，货架玻璃/价签/命中盒/InstancedMesh 商品/顾客发型臂鞋/箱标签均不投影），总提交 ≈646（507 主渲染 + 139 阴影深度），中配预算内。lowfx：`shadowMap.enabled=false` 一个布尔。
 
 ### 5.6 商品表现
 八套共享几何（单件 ≤112 三角（jug 上限）；XZ 包络 ≤0.165m（断言值；tray 0.175 躺放例外））：
