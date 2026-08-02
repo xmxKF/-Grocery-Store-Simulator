@@ -10,11 +10,87 @@
     '日用品': 0x9B6FE0
   };
 
+  // ---- C 期布局（32×20 大壳；原点居中）----
+  var ROOM_HALF_X = 16, ROOM_HALF_Z = 10;
+  var WALL_H = 3.6, WALL_T = 0.2;
+
+  /* 区域范围（AABB，含义：该区的地面活动范围） */
+  var ZONE_RECTS = {
+    A:    { minX: 0.2,  maxX: 15.8, minZ: -3.5, maxZ: 3.5 },
+    B:    { minX: -15.8, maxX: -0.2, minZ: -3.5, maxZ: 3.5 },
+    C:    { minX: -15.8, maxX: 15.8, minZ: -9.8, maxZ: -4.2 },
+    W:    { minX: -15.8, maxX: -8.0, minZ: 4.2,  maxZ: 9.8 },
+    core: { minX: -8.0,  maxX: 15.8, minZ: 4.0,  maxZ: 9.8 }   // 前厅+收银，恒开
+  };
+
+  /* 卷帘门：购买后 mesh 隐藏 + collider 移除 + 节点启用 */
+  var SHUTTERS = [
+    { zone: 'B', minX: -5, maxX: -3, z: 4,  price: 1500, lv: 5, label: '区域 B' },   // 内墙 z=+4 上
+    { zone: 'C', minX: 3,  maxX: 5,  z: -4, price: 3200, lv: 8, label: '区域 C' },   // 内墙 z=-4 上
+    { zone: 'W', x: -8, minZ: 6, maxZ: 8,   price: 900,  lv: 3, label: '仓库' }      // 仓库东墙 x=-8 上
+  ];
+
+  /* 货架表：zone + 中心 + aisleZ（buildRack 朝向与服务点由 aisleZ 推导） */
+  var SHELF_TABLE = [
+    // 区域 A（开局 4 架）
+    { zone:'A', x: 3.0,  z:-1.6, aisleZ: 0 }, { zone:'A', x: 7.5, z:-1.6, aisleZ: 0 },
+    { zone:'A', x: 12.0, z:-1.6, aisleZ: 0 }, { zone:'A', x: 3.0, z: 1.6, aisleZ: 0 },
+    // 区域 B（6 架）
+    { zone:'B', x:-13.5, z:-1.6, aisleZ: 0 }, { zone:'B', x:-10.0, z:-1.6, aisleZ: 0 },
+    { zone:'B', x:-6.5,  z:-1.6, aisleZ: 0 }, { zone:'B', x:-13.5, z: 1.6, aisleZ: 0 },
+    { zone:'B', x:-10.0, z: 1.6, aisleZ: 0 }, { zone:'B', x:-6.5,  z: 1.6, aisleZ: 0 },
+    // 区域 C（6 架，双行，走廊 z=-7.0）
+    { zone:'C', x:-12.0, z:-8.6, aisleZ:-7.0 }, { zone:'C', x:-6.0, z:-8.6, aisleZ:-7.0 },
+    { zone:'C', x: 0.0,  z:-8.6, aisleZ:-7.0 }, { zone:'C', x: 6.0, z:-8.6, aisleZ:-7.0 },
+    { zone:'C', x:-12.0, z:-5.4, aisleZ:-7.0 }, { zone:'C', x:-6.0, z:-5.4, aisleZ:-7.0 }
+  ];
+  var FRIDGE_TABLE = [
+    { zone:'A', x: 7.5, z: 1.6, aisleZ: 0 }, { zone:'A', x: 12.0, z: 1.6, aisleZ: 0 },
+    { zone:'B', x:-2.5, z:-1.6, aisleZ: 0 }, { zone:'B', x:-2.5,  z: 1.6, aisleZ: 0 }
+  ];
+  // 合计 16 组货架 + 4 冷藏 = 120 格 ✓
+
+  /* 收银台：柜台长轴沿 x（Box 2.0×1.0×1.2），中心 z=7.6；R1 开局，R2/R3 随 B/C */
+  var REGISTER_TABLE = [
+    { index: 0, x: -2, zone: 'core' },
+    { index: 1, x: 4,  zone: 'B' },
+    { index: 2, x: 10, zone: 'C' }
+  ];
+  var REGISTER_Z = 7.6;
+  // front=(x, 0, 6.8)；queueSpots z = 6.2, 5.6, 5.0, 4.4, 3.8（沿 -z 排）
+
+  /* 仓库存储位：单层地面网格 6 列 × 4 排 = 24 位 */
+  var STORAGE_XS = [-14.9, -13.7, -12.5, -11.3, -10.1, -8.9];
+  var STORAGE_ZS = [5.0, 6.3, 7.6, 8.9];
+  var STORAGE_TABLE = [];
+  STORAGE_ZS.forEach(function (z) {
+    STORAGE_XS.forEach(function (x) { STORAGE_TABLE.push({ x: x, z: z }); });
+  });   // 24 位（T4 消费；T1 只定义常量不建造）
+
+  /* 卸货区双点位：仓库未购 = 东侧人行道北段；已购 = 西侧仓库外 */
+  var YARD_EAST = [];
+  [16.6, 17.4, 18.2, 19.0].forEach(function (x) {
+    [6.9, 7.7, 8.5].forEach(function (z) { YARD_EAST.push({ x: x, z: z }); });
+  });   // 12 位
+  var YARD_WEST = [];
+  [-19.2, -18.4, -17.6, -16.8].forEach(function (x) {
+    [4.5, 5.5, 6.5].forEach(function (z) { YARD_WEST.push({ x: x, z: z }); });
+  });   // 12 位
+  function activeYardPositions() {
+    return (G.state && G.state.zones && G.state.zones.W) ? YARD_WEST : YARD_EAST;
+  }
+
+  /* 点落在哪个区域（core 优先；不在任何区域返回 null） */
+  function zoneOf(x, z) {
+    var keys = ['core', 'A', 'B', 'C', 'W'];
+    for (var i = 0; i < keys.length; i++) {
+      var r = ZONE_RECTS[keys[i]];
+      if (x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ) return keys[i];
+    }
+    return null;
+  }
+
   // ---- 常量（DESIGN.md §5 / §1.3） ----
-  var ROOM_HALF_X = 8;   // 16m 宽
-  var ROOM_HALF_Z = 6;   // 12m 深
-  var WALL_H = 3.0;
-  var WALL_T = 0.2;
   var SHELF_W = 2.0, SHELF_D = 0.8, SHELF_H = 1.8;
   var SLOT_LOCAL_X = [-0.6, 0, 0.6];
   var SLOT_HEIGHTS = [0.9, 1.4];
@@ -269,32 +345,14 @@
     slot.tagMesh.material.needsUpdate = true;
   }
 
-  // 货架/冷藏柜格位中心坐标（沿 z=0 中央主过道排布，前方 aisleSpot 均在同一条直线上）
-  var SHELF_POSITIONS = [
-    { x: -5.0, z: -1.5 }, { x: -2.5, z: -1.5 }, { x: 0.0, z: -1.5 }, { x: 2.5, z: -1.5 }, // Lv1 起 4 组
-    { x: 5.0, z: -1.5 },  // Lv3 第5组
-    { x: -5.0, z: 1.5 },  // Lv6 第6组
-    { x: -2.5, z: 1.5 }, { x: 0.0, z: 1.5 } // Lv8 第7/8组
-  ];
-  var FRIDGE_POSITIONS = [
-    { x: 2.5, z: 1.5 }, { x: 5.0, z: 1.5 }
-  ];
-
-  var YARD_XS = [8.6, 9.4, 10.2, 11.0];
-  var YARD_ZS = [-1.6, 0, 1.6];
-  var YARD_POSITIONS = [];
-  YARD_ZS.forEach(function (z) {
-    YARD_XS.forEach(function (x) { YARD_POSITIONS.push({ x: x, z: z }); });
-  });
-
   // ---- 模块状态 ----
   var sceneRef = null;
   var allSlots = [];
   var interactables = [];
   var colliders = [];
-  var nav = { entry: null, exit: null, aisleSpots: [], queueSpots: [], registerFront: null };
-  var shelfCount = 0;
-  var fridgeCount = 0;
+  var registers = [];
+  var shutterMeshes = [];
+  var nav = { entry: null, exit: null, aisleSpots: [], registers: registers, queueSpots: [], registerFront: null };
   var cashierGroup = null;
   var cashierVisible = false;
 
@@ -327,142 +385,213 @@
   // ---------------------------------------------------------------
   // 静态建筑几何
   // ---------------------------------------------------------------
+  /* 墙面材质：每段一份（wallWainscot 的 repeat 按段长/2 定，不同段不能共用） */
+  function wallMat(segLen) {
+    return flatMat(G.tex.on ? 0xFFFFFF : 0xEFE9DE,
+      G.tex.on ? { map: G.tex.wallWainscot(segLen / 2, 1) } : null);
+  }
+
+  /* 一段沿 x 铺开的墙（z 为墙面中线）：mesh + 一条厚 ±0.2 的 collider */
+  function wallAlongX(x0, x1, z) {
+    var len = x1 - x0;
+    var m = new THREE.Mesh(new THREE.BoxGeometry(len, WALL_H, WALL_T), wallMat(len));
+    m.position.set((x0 + x1) / 2, WALL_H / 2, z);
+    addShell(m);
+    colliders.push({ minX: x0, maxX: x1, minZ: z - 0.2, maxZ: z + 0.2 });
+  }
+
+  /* 一段沿 z 铺开的墙（x 为墙面中线） */
+  function wallAlongZ(x, z0, z1) {
+    var len = z1 - z0;
+    var m = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, len), wallMat(len));
+    m.position.set(x, WALL_H / 2, (z0 + z1) / 2);
+    addShell(m);
+    colliders.push({ minX: x - 0.2, maxX: x + 0.2, minZ: z0, maxZ: z1 });
+  }
+
+  /* 卷帘门：关着时挡视线也挡人；buildZone 按 userData.shutter / collider.zoneGate 一并解除 */
+  function buildShutters() {
+    for (var i = 0; i < SHUTTERS.length; i++) {
+      var s = SHUTTERS[i];
+      var alongX = (s.minX != null);
+      var w = alongX ? (s.maxX - s.minX) : (s.maxZ - s.minZ);
+      var m = new THREE.Mesh(new THREE.BoxGeometry(w, 3.0, 0.12),
+        flatMat(0x9AA4AE, G.tex.on ? { map: G.tex.shelfMetal(2, 3) } : null));
+      if (alongX) {
+        m.position.set((s.minX + s.maxX) / 2, 1.5, s.z);
+        colliders.push({ minX: s.minX, maxX: s.maxX, minZ: s.z - 0.2, maxZ: s.z + 0.2, zoneGate: s.zone });
+      } else {
+        m.position.set(s.x, 1.5, (s.minZ + s.maxZ) / 2);
+        m.rotation.y = Math.PI / 2;
+        colliders.push({ minX: s.x - 0.2, maxX: s.x + 0.2, minZ: s.minZ, maxZ: s.maxZ, zoneGate: s.zone });
+      }
+      m.userData.shutter = s.zone;
+      addMesh(m, false, true);
+      shutterMeshes.push(m);
+      registerInteractable(m, {
+        type: 'shutter',
+        data: { zone: s.zone, price: s.price, lv: s.lv, label: s.label },
+        prompt: ''   // 文案由 player.computePrompt 按条件生成（T3）
+      });
+    }
+  }
+
   function buildRoom() {
     // 地板
     var floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF_X * 2, ROOM_HALF_Z * 2),
-      flatMat(G.tex.on ? 0xFFFFFF : 0xD8D2C6, G.tex.on ? { map: G.tex.floorWood(8, 6) } : null));
+      flatMat(G.tex.on ? 0xFFFFFF : 0xD8D2C6, G.tex.on ? { map: G.tex.floorWood(16, 10) } : null));
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(0, 0, 0);
     addShell(floor);
 
     // 天花板
     var ceiling = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_HALF_X * 2, ROOM_HALF_Z * 2),
-      flatMat(G.tex.on ? 0xFFFFFF : 0xF5F2EC, G.tex.on ? { map: G.tex.ceilingPanel(13.3, 10) } : null));
+      flatMat(G.tex.on ? 0xFFFFFF : 0xF5F2EC, G.tex.on ? { map: G.tex.ceilingPanel(26.7, 16.7) } : null));
     ceiling.rotation.x = Math.PI / 2;
     ceiling.position.set(0, WALL_H, 0);
     addShell(ceiling);
 
-    // 墙体：wallMat 拆为 per-wall 材质（repeat 不同）
-    var wMatW = flatMat(G.tex.on ? 0xFFFFFF : 0xEFE9DE, G.tex.on ? { map: G.tex.wallWainscot(6.1, 1) } : null);
-    var wMatNS = flatMat(G.tex.on ? 0xFFFFFF : 0xEFE9DE, G.tex.on ? { map: G.tex.wallWainscot(8.1, 1) } : null);
-    var wMatE = flatMat(G.tex.on ? 0xFFFFFF : 0xEFE9DE, G.tex.on ? { map: G.tex.wallWainscot(2.5, 1) } : null);
-    // 西墙 x=-8
-    var wWall = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, ROOM_HALF_Z * 2 + WALL_T), wMatW);
-    wWall.position.set(-ROOM_HALF_X, WALL_H / 2, 0);
-    addShell(wWall);
-    // 北墙 z=-6
-    var nWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wMatNS);
-    nWall.position.set(0, WALL_H / 2, -ROOM_HALF_Z);
-    addShell(nWall);
-    // 南墙 z=6
-    var sWall = new THREE.Mesh(new THREE.BoxGeometry(ROOM_HALF_X * 2 + WALL_T, WALL_H, WALL_T), wMatNS);
-    sWall.position.set(0, WALL_H / 2, ROOM_HALF_Z);
-    addShell(sWall);
-    // 东墙（留门缺口 z∈[-1,1]）
-    var eWallA = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wMatE);
-    eWallA.position.set(ROOM_HALF_X, WALL_H / 2, -3.5);
-    addShell(eWallA);
-    var eWallB = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, 5), wMatE);
-    eWallB.position.set(ROOM_HALF_X, WALL_H / 2, 3.5);
-    addShell(eWallB);
+    // 外墙 6 段：西墙留送货门缺口 z∈[6,8]，东墙留顾客门缺口 z∈[4.4,6.2]
+    wallAlongZ(-ROOM_HALF_X, -ROOM_HALF_Z - 0.2, 6);
+    wallAlongZ(-ROOM_HALF_X, 8, ROOM_HALF_Z + 0.2);
+    wallAlongX(-ROOM_HALF_X - 0.2, ROOM_HALF_X + 0.2, -ROOM_HALF_Z);
+    wallAlongX(-ROOM_HALF_X - 0.2, ROOM_HALF_X + 0.2, ROOM_HALF_Z);
+    wallAlongZ(ROOM_HALF_X, -ROOM_HALF_Z - 0.2, 4.4);
+    wallAlongZ(ROOM_HALF_X, 6.2, ROOM_HALF_Z + 0.2);
 
-    // 门框（装饰立柱）
+    // 内隔墙 6 段：z=-4（C 门缺口 x∈[3,5]）、z=+4 半宽（B 门缺口 x∈[-5,-3]）、x=-8 仓库东墙（W 门缺口 z∈[6,8]）
+    wallAlongX(-ROOM_HALF_X, 3, -4);
+    wallAlongX(5, ROOM_HALF_X, -4);
+    wallAlongX(-ROOM_HALF_X, -5, 4);
+    wallAlongX(-3, 0, 4);
+    wallAlongZ(-8, 4, 6);
+    wallAlongZ(-8, 8, ROOM_HALF_Z + 0.2);
+
+    buildShutters();
+
+    // 门框（装饰立柱）：顾客门（东）+ 送货门（西）各两根
     var frameMat = flatMat(0x7A6A55);
     var postGeo = new THREE.BoxGeometry(0.15, WALL_H, 0.15);
-    var postA = new THREE.Mesh(postGeo, frameMat);
-    postA.position.set(ROOM_HALF_X, WALL_H / 2, -1);
-    addShell(postA);
-    var postB = new THREE.Mesh(postGeo.clone(), frameMat);
-    postB.position.set(ROOM_HALF_X, WALL_H / 2, 1);
-    addShell(postB);
+    [[ROOM_HALF_X, 4.4], [ROOM_HALF_X, 6.2], [-ROOM_HALF_X, 6], [-ROOM_HALF_X, 8]].forEach(function (p, i) {
+      var post = new THREE.Mesh(i === 0 ? postGeo : postGeo.clone(), frameMat);
+      post.position.set(p[0], WALL_H / 2, p[1]);
+      addShell(post);
+    });
 
-    // 卸货区地面
-    var yardW = 3.5, yardD = 5;
-    var yard = new THREE.Mesh(new THREE.PlaneGeometry(yardW, yardD),
-      flatMat(G.tex.on ? 0xFFFFFF : 0xC7BEAF, G.tex.on ? { map: G.tex.yardConcrete(2, 2.9) } : null));
-    yard.rotation.x = -Math.PI / 2;
-    yard.position.set(ROOM_HALF_X + yardW / 2, 0.001, 0);
-    addShell(yard);
+    // 卸货区地面：东侧一整块混凝土（人行道与卸货位并作一块）x[16,20] z[2,10]；西侧仓库外 x[-20,-16] z[4.1,7.3]
+    var yardE = new THREE.Mesh(new THREE.PlaneGeometry(4, 8),
+      flatMat(G.tex.on ? 0xFFFFFF : 0xC7BEAF, G.tex.on ? { map: G.tex.yardConcrete(2, 4) } : null));
+    yardE.rotation.x = -Math.PI / 2;
+    yardE.position.set(18, 0.001, 6);
+    addShell(yardE);
+    var yardW = new THREE.Mesh(new THREE.PlaneGeometry(4, 3.2),
+      flatMat(G.tex.on ? 0xFFFFFF : 0xC7BEAF, G.tex.on ? { map: G.tex.yardConcrete(2, 1.6) } : null));
+    yardW.rotation.x = -Math.PI / 2;
+    yardW.position.set(-18, 0.001, 5.7);
+    addShell(yardW);
 
-    // 墙体碰撞体
-    colliders.push({ minX: -ROOM_HALF_X - 0.2, maxX: -ROOM_HALF_X + 0.2, minZ: -ROOM_HALF_Z - 0.2, maxZ: ROOM_HALF_Z + 0.2 });
-    colliders.push({ minX: -ROOM_HALF_X - 0.2, maxX: ROOM_HALF_X + 0.2, minZ: -ROOM_HALF_Z - 0.2, maxZ: -ROOM_HALF_Z + 0.2 });
-    colliders.push({ minX: -ROOM_HALF_X - 0.2, maxX: ROOM_HALF_X + 0.2, minZ: ROOM_HALF_Z - 0.2, maxZ: ROOM_HALF_Z + 0.2 });
-    colliders.push({ minX: ROOM_HALF_X - 0.2, maxX: ROOM_HALF_X + 0.2, minZ: -ROOM_HALF_Z - 0.2, maxZ: -1.0 });
-    colliders.push({ minX: ROOM_HALF_X - 0.2, maxX: ROOM_HALF_X + 0.2, minZ: 1.0, maxZ: ROOM_HALF_Z + 0.2 });
+    // 世界边界围栏（否则出门后可以一直往外走，走出世界边缘悬空）：东西两侧各三条
+    colliders.push({ minX: 20, maxX: 20.4, minZ: -11.2, maxZ: 11.2 });
+    colliders.push({ minX: ROOM_HALF_X, maxX: 20.4, minZ: -11.2, maxZ: -10.8 });
+    colliders.push({ minX: ROOM_HALF_X, maxX: 20.4, minZ: 10.8, maxZ: 11.2 });
+    colliders.push({ minX: -20.4, maxX: -20, minZ: -11.2, maxZ: 11.2 });
+    colliders.push({ minX: -20.4, maxX: -ROOM_HALF_X, minZ: -11.2, maxZ: -10.8 });
+    colliders.push({ minX: -20.4, maxX: -ROOM_HALF_X, minZ: 10.8, maxZ: 11.2 });
 
-    // 卸货区边界（否则出门后可以一直往外走，走出世界边缘悬空）
-    colliders.push({ minX: ROOM_HALF_X + yardW, maxX: ROOM_HALF_X + yardW + 0.4, minZ: -yardD / 2 - 0.2, maxZ: yardD / 2 + 0.2 });
-    colliders.push({ minX: ROOM_HALF_X - 0.2, maxX: ROOM_HALF_X + yardW + 0.4, minZ: -yardD / 2 - 0.2, maxZ: -yardD / 2 + 0.2 });
-    colliders.push({ minX: ROOM_HALF_X - 0.2, maxX: ROOM_HALF_X + yardW + 0.4, minZ: yardD / 2 - 0.2, maxZ: yardD / 2 + 0.2 });
-
-    buildCheckout();
+    buildRegister(0);
     buildComputer();
     buildTrash();
 
     // 导航点
-    nav.entry = new THREE.Vector3(7.3, 0, 0);
-    // 出口在门外卸货区（GDD §6.5 顾客「从 nav.exit 走出」），避开 YARD_POSITIONS 的箱位
-    nav.exit = new THREE.Vector3(9.0, 0, 0.8);
-    nav.registerFront = new THREE.Vector3(-6.2, 0, 0);
-    nav.queueSpots = [
-      new THREE.Vector3(-5.6, 0, 0),
-      new THREE.Vector3(-5.0, 0, 0),
-      new THREE.Vector3(-4.4, 0, 0),
-      new THREE.Vector3(-3.8, 0, 0),
-      new THREE.Vector3(-3.2, 0, 0)
-    ];
+    nav.entry = new THREE.Vector3(15.2, 0, 5.3);
+    // 出口在门外人行道（GDD §6.5 顾客「从 nav.exit 走出」），避开 YARD_EAST 的箱位
+    nav.exit = new THREE.Vector3(18, 0, 5.3);
+    // 废弃字段：指向 R1 的等价值，让 checkout 的单台代码继续工作——T3 重构后删除
+    nav.registerFront = registers[0].front;
+    nav.queueSpots = registers[0].queueSpots;
   }
 
-  function buildCheckout() {
-    var body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 2.0),
+  function buildRegister(i) {
+    var def = REGISTER_TABLE[i];
+    var body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.0, 1.2),
       flatMat(G.tex.on ? 0xFFFFFF : 0x6E7A88, G.tex.on ? { map: G.tex.counterLaminate(1.2, 2) } : null));
-    body.position.set(-7.0, 0.5, 0);
+    body.position.set(def.x, 0.5, REGISTER_Z);
     addMesh(body, true, true);
-    var belt = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 1.6),
+    var belt = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.9),
       flatMat(0x4E5866, G.tex.on ? { map: G.tex.beltRubber(3, 5) } : null));
-    belt.position.set(-7.0, 1.04, 0);
+    belt.position.set(def.x, 1.04, REGISTER_Z);
     belt.userData.belt = true;
+    belt.userData.registerId = i;
     addMesh(belt, true, true);
-    colliders.push({ minX: -7.6, maxX: -6.4, minZ: -1.0, maxZ: 1.0 });
-    registerInteractable(body, { type: 'register', data: {}, prompt: '[E] 进入收银台' });
+    colliders.push({ minX: def.x - 1.0, maxX: def.x + 1.0, minZ: REGISTER_Z - 0.6, maxZ: REGISTER_Z + 0.6 });
+    var front = new THREE.Vector3(def.x, 0, 6.8);
+    var spots = [];
+    [6.2, 5.6, 5.0, 4.4, 3.8].forEach(function (z) { spots.push(new THREE.Vector3(def.x, 0, z)); });
+    var reg = { index: i, mesh: body, beltMesh: belt, front: front, queueSpots: spots, zone: def.zone };
+    // registers 与 nav.registers 是同一个数组（模块级同源同引用），只推一次
+    registers.push(reg);
+    registerInteractable(body, { type: 'register', data: { register: reg }, prompt: '[E] 进入收银台' });
+    return reg;
+  }
+
+  function registerAt(i) {
+    for (var k = 0; k < registers.length; k++) { if (registers[k].index === i) return registers[k]; }
+    return null;
   }
 
   function buildComputer() {
     var body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 0.4), flatMat(0x3A424C));
-    body.position.set(-7.0, 0.45, -5.3);
+    body.position.set(14, 0.45, 9.4);
     addMesh(body, true, true);
+    // 屏幕在机身 -z 侧，即面朝店内
     var screen = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.03), flatMat(0x4C9BE8));
-    screen.position.set(-7.0, 0.85, -5.08);
+    screen.position.set(14, 0.85, 9.18);
     addMesh(screen, true, true);
-    colliders.push({ minX: -7.25, maxX: -6.75, minZ: -5.5, maxZ: -5.1 });
+    colliders.push({ minX: 13.75, maxX: 14.25, minZ: 9.2, maxZ: 9.6 });
     registerInteractable(body, { type: 'computer', data: {}, prompt: '[E] 打开订货电脑' });
   }
 
   function buildTrash() {
+    // 前厅（core）南墙边：全期一处，不随仓库开放而移动
     var bin = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.25, 0.6, 8), flatMat(0x5A6B5E));
-    bin.position.set(7.0, 0.3, -5.3);
+    bin.position.set(-7.4, 0.3, 9.4);
     addMesh(bin, true, true);
-    colliders.push({ minX: 6.7, maxX: 7.3, minZ: -5.6, maxZ: -5.0 });
+    colliders.push({ minX: -7.7, maxX: -7.1, minZ: 9.1, maxZ: 9.7 });
     registerInteractable(bin, { type: 'trash', data: {}, prompt: '[E] 丢弃纸箱' });
+  }
+
+  /* 区域开放（幂等）：zones[zone] 置位由调用方负责，本函数只做视觉与物理 */
+  function buildZone(zone) {
+    var i;
+    for (i = 0; i < shutterMeshes.length; i++) {
+      if (shutterMeshes[i].userData.shutter === zone) shutterMeshes[i].visible = false;
+    }
+    for (i = colliders.length - 1; i >= 0; i--) {
+      if (colliders[i].zoneGate === zone) colliders.splice(i, 1);
+    }
+    syncLayout();
+    if (zone === 'B' && !registerAt(1)) buildRegister(1);
+    if (zone === 'C' && !registerAt(2)) buildRegister(2);
+    // zone === 'W' 的仓库存储架由 T4 建造（STORAGE_TABLE 已就位）
+    if (nav.rebuildGraph) nav.rebuildGraph();   // 寻路节点门控由 T2 接入
   }
 
   // ---------------------------------------------------------------
   // 收银员站桩（GDD §9 / CONTRACTS.md setCashierVisible）
-  // 复用顾客 9 件构造（G.customers.buildFigure），固定形象；站在收银台与西墙之间
-  // 的 0.3m 空隙，旋转 90° 后身体进深占 x 轴（躯干 0.234 / 鞋 0.22 / 短块发 0.29 均 ≤0.3）。
+  // 复用顾客 9 件构造（G.customers.buildFigure），固定形象；站在 R1 柜台南侧的
+  // 0.8m 员工通道内（躯干 0.234 / 鞋 0.22 / 短块发 0.29 的进深沿 z 轴），面朝 -z 的顾客方向。
   function buildCashierFigure() {
     var body = G.customers.buildFigure({
       shirt: '#4C9BE8',   // CONTRACTS：制服固定色
       pants: '#2E3742',
       skin: '#D9A878',
       hair: '#2A2118',
-      hairStyle: 0,       // 短块：深度 0.29 ≤ 0.3m 空隙（后长 0.34/平顶 0.31 超限）
+      hairStyle: 0,       // 短块：深度 0.29 最浅（后长 0.34/平顶 0.31 更占通道）
       h: 1.0, w: 1.0
     });
     var group = body.group;
-    group.position.set(-7.75, 0, 0);
-    group.rotation.y = Math.PI / 2;   // 面朝 +x：传送带 / 排队方向
+    group.position.set(REGISTER_TABLE[0].x, 0, 8.55);
+    group.rotation.y = Math.PI;   // 面朝 -z：传送带 / 排队方向
     return group;
   }
 
@@ -481,9 +610,9 @@
   // ---------------------------------------------------------------
   // 货架 / 冷藏柜
   // ---------------------------------------------------------------
-  function buildRack(idPrefix, centerX, centerZ, isFridge) {
+  function buildRack(idPrefix, centerX, centerZ, isFridge, aisleZ) {
     var group = new THREE.Group();
-    var facing = centerZ <= 0 ? 1 : -1; // 朝向中央主过道（z=0）一侧
+    var facing = (aisleZ > centerZ) ? 1 : -1;   // 朝向本行的走廊
     var frontZ = centerZ + facing * (SHELF_D / 2);
     var backZ = centerZ - facing * (SHELF_D / 2 - 0.025);
 
@@ -522,7 +651,7 @@
 
     sceneRef.add(group);
 
-    var aisleSpot = new THREE.Vector3(centerX, 0, 0);
+    var aisleSpot = new THREE.Vector3(centerX, 0, aisleZ);
     var groupSlots = [];
     SLOT_HEIGHTS.forEach(function (y, rowIdx) {
       SLOT_LOCAL_X.forEach(function (lx, ci) {
@@ -570,24 +699,25 @@
     return { group: group, slots: groupSlots, aisleSpot: aisleSpot };
   }
 
+  /* 分区惰性建造（幂等）：已开放区域的整行货架一次补齐；建造去重靠行上的 _built 标记 */
   function syncLayout() {
     if (!sceneRef) return;
-    var level = (G.state && G.state.level) || 1;
+    var zones = (G.state && G.state.zones) || { A: true };
     var licenses = (G.state && G.state.licenses) || [];
+    var fresh = licenses.indexOf('生鲜') !== -1;
 
-    var targetShelves = level >= 8 ? 8 : (level >= 6 ? 6 : (level >= 3 ? 5 : 4));
-    while (shelfCount < targetShelves && shelfCount < SHELF_POSITIONS.length) {
-      var sp = SHELF_POSITIONS[shelfCount];
-      buildRack('shelf' + shelfCount, sp.x, sp.z, false);
-      shelfCount++;
-    }
+    SHELF_TABLE.forEach(function (row, i) {
+      if (row._built || !zones[row.zone]) return;
+      buildRack('shelf' + i, row.x, row.z, false, row.aisleZ);
+      row._built = true;
+    });
 
-    var targetFridges = licenses.indexOf('生鲜') !== -1 ? 2 : 0;
-    while (fridgeCount < targetFridges && fridgeCount < FRIDGE_POSITIONS.length) {
-      var fp = FRIDGE_POSITIONS[fridgeCount];
-      buildRack('fridge' + fridgeCount, fp.x, fp.z, true);
-      fridgeCount++;
-    }
+    // 冷藏柜：区域开放 × 生鲜许可证 双门槛
+    FRIDGE_TABLE.forEach(function (row, i) {
+      if (row._built || !zones[row.zone] || !fresh) return;
+      buildRack('fridge' + i, row.x, row.z, true, row.aisleZ);
+      row._built = true;
+    });
   }
 
   // ---------------------------------------------------------------
@@ -731,17 +861,18 @@
 
   /* 找一个当前没有箱子占用的箱位：箱子被搬走/丢弃后数量不再等于占用情况，按数量取模会叠箱 */
   function freeYardSlot() {
+    var yard = activeYardPositions();
     var used = {};
     for (var i = 0; i < interactables.length; i++) {
       var it = interactables[i];
       if (it.type !== 'box' || !it.mesh) continue;
-      for (var j = 0; j < YARD_POSITIONS.length; j++) {
-        var p = YARD_POSITIONS[j];
+      for (var j = 0; j < yard.length; j++) {
+        var p = yard[j];
         if (Math.abs(it.mesh.position.x - p.x) < 0.3 && Math.abs(it.mesh.position.z - p.z) < 0.3) { used[j] = 1; break; }
       }
     }
-    for (var k = 0; k < YARD_POSITIONS.length; k++) { if (!used[k]) return YARD_POSITIONS[k]; }
-    return YARD_POSITIONS[0];
+    for (var k = 0; k < yard.length; k++) { if (!used[k]) return yard[k]; }
+    return yard[0];
   }
 
   function spawnBox(pid) {
@@ -809,7 +940,10 @@
     updateSlotTag: updateSlotTag,
     interactables: interactables,
     colliders: colliders,
+    registers: registers,
     nav: nav,
+    buildZone: buildZone,
+    zoneOf: zoneOf,
     serializeShelves: serializeShelves,
     restoreShelves: restoreShelves,
     syncLayout: syncLayout,

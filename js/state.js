@@ -61,6 +61,7 @@
     clock: 0,
     open: false,
     cashier: false,
+    zones: { A: true, B: false, C: false, W: false },
     negDays: 0,   // 连续日结算余额为负的天数（GDD §8 连续 3 天 → 游戏结束）
     dayStats: { revenue: 0, cogs: 0, customers: 0, itemsSold: 0 }
   };

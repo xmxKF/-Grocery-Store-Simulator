@@ -29,7 +29,7 @@
   function buildScene() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0xAECBE0);          // DESIGN §1.3
-    scene.fog = new THREE.Fog(0xAECBE0, 30, 90);           // DESIGN §5
+    scene.fog = new THREE.Fog(0xAECBE0, 45, 140);          // DESIGN §5
 
     var amb = new THREE.AmbientLight(0xFFFFFF, 0.12);      // DESIGN §5.5 保底不死黑
     scene.add(amb);
@@ -40,10 +40,10 @@
     sun.target.position.set(0, 0, 0);
     if (G.tex && G.tex.on) {
       sun.castShadow = true;                                // DESIGN §5.5：唯一投影灯
-      sun.shadow.mapSize.set(2048, 2048);
-      sun.shadow.camera.left = -13; sun.shadow.camera.right = 13;
-      sun.shadow.camera.top = 13; sun.shadow.camera.bottom = -13;
-      sun.shadow.camera.near = 1; sun.shadow.camera.far = 40;
+      sun.shadow.mapSize.set(4096, 4096);
+      sun.shadow.camera.left = -26; sun.shadow.camera.right = 26;
+      sun.shadow.camera.top = 26; sun.shadow.camera.bottom = -26;
+      sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
       sun.shadow.bias = -0.0004;
       sun.shadow.normalBias = 0.03;
     } else {
@@ -55,7 +55,7 @@
     var aspect = (window.innerWidth || 1280) / (window.innerHeight || 720);
     camera = new THREE.PerspectiveCamera(70, aspect, 0.1, 200);   // DESIGN §5 比例
     camera.rotation.order = 'YXZ';
-    camera.position.set(6.5, 1.65, 3.0);
+    camera.position.set(14, 1.65, 5.3);
     camera.rotation.set(0, Math.PI / 2, 0);                // 进门后面朝店内（-x）
   }
 
@@ -347,9 +347,21 @@
       startGame();
 
       ck('boot.scene', !!scene && !!camera && G.world.slots.length === 24, '格位 ' + G.world.slots.length);
-      ck('boot.nav', !!G.world.nav.entry && G.world.nav.queueSpots.length === 5 && G.world.nav.aisleSpots.length === 4,
-        'aisle ' + G.world.nav.aisleSpots.length + ' / queue ' + G.world.nav.queueSpots.length);
+      ck('boot.nav', !!G.world.nav.entry && G.world.nav.registers.length >= 1 &&
+        G.world.nav.registers[0].queueSpots.length === 5 && G.world.nav.aisleSpots.length === 4,
+        'aisle ' + G.world.nav.aisleSpots.length + ' / 收银台 ' + G.world.nav.registers.length);
       ck('boot.state', G.state.money === 800 && G.state.day === 1 && G.state.level === 1, G.fmt(G.state.money));
+
+      /* --- C-T1 壳体与分区（新布局地基）--- */
+      ck('world.shellSize', G.world.colliders.length >= 18, '大壳 collider 数 ' + G.world.colliders.length);
+      var builtB = 0;
+      for (var zi = 0; zi < G.world.slots.length; zi++) {
+        var zs = G.world.slots[zi];
+        if (zs.pos.x < -0.2 && zs.pos.z > -4 && zs.pos.z < 4) builtB++;   // B 区范围内的格位
+      }
+      ck('world.zoneGating', builtB === 0, '未购区域 B 不得有格位（现 ' + builtB + '）');
+      ck('world.zoneState', G.state.zones && G.state.zones.A === true && G.state.zones.B === false,
+        JSON.stringify(G.state.zones));
 
       /* --- 订货 --- */
       var m0 = G.state.money;
@@ -664,7 +676,7 @@
       function findCashierGroup() {
         var found = null, n = 0;
         scene.traverse(function (o) {
-          if (o.isGroup && o.position.x === -7.75 && o.position.z === 0) { found = o; n++; }
+          if (o.isGroup && o.position.x === -2 && Math.abs(o.position.z - 8.55) < 0.2) { found = o; n++; }
         });
         return { group: found, n: n };
       }
@@ -683,11 +695,11 @@
       if (cf.group) {
         cf.group.updateMatrixWorld(true);
         cfBox = new THREE.Box3().setFromObject(cf.group);
-        cfGeomOk = Math.abs(cf.group.rotation.y - Math.PI / 2) < 1e-6 &&
-          cfBox.min.x >= -7.9 && cfBox.max.x <= -7.6;
+        cfGeomOk = (Math.abs(cf.group.rotation.y) < 1e-6 || Math.abs(cf.group.rotation.y - Math.PI) < 1e-6) &&
+          cfBox.min.z >= 8.2 && cfBox.max.z <= 9.0;
       }
       ck('world.cashierFits', cfGeomOk,
-        cf.group ? ('旋转与包络须卡进 0.3m 空隙：x[' + cfBox.min.x.toFixed(3) + ',' + cfBox.max.x.toFixed(3) + ']') : '无站桩组');
+        cf.group ? ('旋转与包络须卡进 0.8m 员工通道：z[' + cfBox.min.z.toFixed(3) + ',' + cfBox.max.z.toFixed(3) + ']') : '无站桩组');
       G.world.setCashierVisible(true);
       ck('world.cashierIdempotent', findCashierGroup().n === 1, '重复 setVisible(true) 不得复制');
       G.world.setCashierVisible(false);
@@ -747,9 +759,9 @@
         '相机 ' + JSON.stringify({ x: round2(camera.position.x), y: round2(camera.position.y), z: round2(camera.position.z) }) +
         ' 应到达 ' + JSON.stringify({ x: round2(st.pos.x), y: round2(st.pos.y), z: round2(st.pos.z) }));
 
-      // 站位必须在柜台背侧（x < 柜台中心 -7.0），而非顾客侧
-      ck('checkout.stanceBehind', !!st && st.pos.x < -7.0,
-        '站位 x = ' + (st && round2(st.pos.x)) + '，应 < -7.0（柜台背侧）');
+      // 站位必须在柜台背侧（z > 柜台南缘 8.2），而非顾客侧
+      ck('checkout.stanceBehind', !!st && st.pos.z > 8.2,
+        '站位 z = ' + (st && round2(st.pos.z)) + '，应 > 8.2（柜台南侧员工通道）');
 
       // 看得到就点得到：从站位朝 stance 朝向，传送带上每一件商品都须在画面内，
       // 且落在右侧 340px 的 #pos 面板左边——被面板盖住的商品点不到
@@ -880,7 +892,7 @@
         }
       }
       var drawN = countDrawables(scene);
-      ck('perf.drawCallCeiling', drawN < 550, '满场轮转灌店+满员顾客手持 drawable=' + drawN + '，天花板 550（满场闸门实测 ≈507 + ~8% 余量；含自测前序残留；干净启动满场为 502）');
+      ck('perf.drawCallCeiling', drawN < 700, '满场轮转灌店+满员顾客手持 drawable=' + drawN + '，天花板 700（C-T1 壳体+围栏增量后的临时口径；T7 随全区开放统一定 760）');
 
       /* --- 渲染（无头环境可能没有 WebGL）--- */
       if (renderer) {
