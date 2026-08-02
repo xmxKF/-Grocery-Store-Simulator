@@ -459,13 +459,15 @@
     wallAlongZ(ROOM_HALF_X, -ROOM_HALF_Z - 0.2, 4.4);
     wallAlongZ(ROOM_HALF_X, 6.2, ROOM_HALF_Z + 0.2);
 
-    // 内隔墙 6 段：z=-4（C 门缺口 x∈[3,5]）、z=+4 半宽（B 门缺口 x∈[-5,-3]）、x=-8 仓库东墙（W 门缺口 z∈[6,8]）
+    // 内隔墙 7 段：z=-4（C 门缺口 x∈[3,5]）、z=+4 半宽（B 门缺口 x∈[-5,-3]）、x=-8 仓库东墙（W 门缺口 z∈[6,8]）
     wallAlongX(-ROOM_HALF_X, 3, -4);
     wallAlongX(5, ROOM_HALF_X, -4);
     wallAlongX(-ROOM_HALF_X, -5, 4);
     wallAlongX(-3, 0, 4);
     wallAlongZ(-8, 4, 6);
     wallAlongZ(-8, 8, ROOM_HALF_Z + 0.2);
+    // A↔B 区界墙（无缺口）：B 区只经前厅的 B 卷帘门进入，分区商场动线
+    wallAlongZ(0, -4, 4);
 
     buildShutters();
 
@@ -490,13 +492,14 @@
     yardW.position.set(-18, 0.001, 5.7);
     addShell(yardW);
 
-    // 世界边界围栏（否则出门后可以一直往外走，走出世界边缘悬空）：东西两侧各三条
-    colliders.push({ minX: 20, maxX: 20.4, minZ: -11.2, maxZ: 11.2 });
-    colliders.push({ minX: ROOM_HALF_X, maxX: 20.4, minZ: -11.2, maxZ: -10.8 });
-    colliders.push({ minX: ROOM_HALF_X, maxX: 20.4, minZ: 10.8, maxZ: 11.2 });
-    colliders.push({ minX: -20.4, maxX: -20, minZ: -11.2, maxZ: 11.2 });
-    colliders.push({ minX: -20.4, maxX: -ROOM_HALF_X, minZ: -11.2, maxZ: -10.8 });
-    colliders.push({ minX: -20.4, maxX: -ROOM_HALF_X, minZ: 10.8, maxZ: 11.2 });
+    // 世界边界围栏（东西两侧各三条）：收在混凝土地面范围内，玩家出门后不得踩虚空。
+    // 东 z∈[2,10]（门 4.4-6.2 / 箱位 6.9-8.5 / nav.exit 5.3 均在内）；西 z∈[3.5,10.5]
+    colliders.push({ minX: 20, maxX: 20.4, minZ: 1.8, maxZ: 10.2 });
+    colliders.push({ minX: ROOM_HALF_X, maxX: 20.4, minZ: 1.8, maxZ: 2.2 });
+    colliders.push({ minX: ROOM_HALF_X, maxX: 20.4, minZ: 9.8, maxZ: 10.2 });
+    colliders.push({ minX: -20.4, maxX: -20, minZ: 3.3, maxZ: 10.7 });
+    colliders.push({ minX: -20.4, maxX: -ROOM_HALF_X, minZ: 3.3, maxZ: 3.7 });
+    colliders.push({ minX: -20.4, maxX: -ROOM_HALF_X, minZ: 10.3, maxZ: 10.7 });
 
     buildRegister(0);
     buildComputer();
@@ -560,9 +563,10 @@
     registerInteractable(bin, { type: 'trash', data: {}, prompt: '[E] 丢弃纸箱' });
   }
 
-  /* 区域开放（幂等）：zones[zone] 置位由调用方负责，本函数只做视觉与物理 */
+  /* 区域开放（幂等）：置位 + 视觉 + 物理的单一入口，调用方无需再关心先后次序 */
   function buildZone(zone) {
     var i;
+    if (G.state && G.state.zones) G.state.zones[zone] = true;
     for (i = 0; i < shutterMeshes.length; i++) {
       if (shutterMeshes[i].userData.shutter === zone) shutterMeshes[i].visible = false;
     }

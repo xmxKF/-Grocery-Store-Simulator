@@ -100,7 +100,7 @@ G.world.serializeShelves() / G.world.restoreShelves(data)
 G.world.registers   // [{index, mesh, beltMesh, front:Vector3, queueSpots:[Vector3×5], zone}]（按区域解锁惰性建造）
 G.world.storageSlots // [{id, pos, marker, box:null|箱}]（仓库购买后建造，24 位）
 G.world.storeBox(slot, box) /*->bool*/  G.world.takeBox(slot) /*->box|null*/
-G.world.buildZone(z /*'B'|'C'|'W'*/)   // 幂等；开门+除collider+启用节点+建造该区设施
+G.world.buildZone(z /*'B'|'C'|'W'*/)   // 幂等；自置位 zones[z]+开门+除collider+启用节点+建造该区设施
 ```
 店内寻路：`G.world.nav.findPath(from, to) -> [Vector3]`（走廊节点图 + Dijkstra；未解锁区域节点禁用，
 不可达返回 []）。顾客经 findPath 折线移动，互不碰撞可穿过；玩家与员工不寻路。

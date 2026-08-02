@@ -362,6 +362,12 @@
       ck('world.zoneGating', builtB === 0, '未购区域 B 不得有格位（现 ' + builtB + '）');
       ck('world.zoneState', G.state.zones && G.state.zones.A === true && G.state.zones.B === false,
         JSON.stringify(G.state.zones));
+      var bWallOk = false;
+      for (var bw = 0; bw < G.world.colliders.length; bw++) {
+        var bc = G.world.colliders[bw];
+        if (bc.minX <= 0 && bc.maxX >= 0 && bc.minX > -0.5 && bc.maxX < 0.5 && bc.minZ <= -3.5 && bc.maxZ >= 3.5) { bWallOk = true; break; }
+      }
+      ck('world.zoneBWall', bWallOk, 'x=0 区界墙 collider 必须存在（B 区物理封锁）');
 
       /* --- 订货 --- */
       var m0 = G.state.money;
