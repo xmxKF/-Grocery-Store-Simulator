@@ -162,24 +162,28 @@
   }
 
   /* GDD §6 / DESIGN §5.7 体型：9 部件（躯干/头/发/臂×2/腿×2/鞋×2），随机胖瘦高矮 + 四色板。
-     几何体与材质是模块级共享单例：顾客销毁时只移出场景，不 dispose（共享资源，dispose 会破坏其它顾客）。 */
-  function buildBody() {
-    var shirtMat = matFor(bodyMats, SHIRTS[G.randInt(0, SHIRTS.length - 1)]);
-    var pantsMat = matFor(bodyMats, PANTS[G.randInt(0, PANTS.length - 1)]);
-    var skinMat = matFor(bodyMats, SKINS[G.randInt(0, SKINS.length - 1)]);
-    var hairMat = matFor(bodyMats, HAIRS[G.randInt(0, HAIRS.length - 1)]);
+     几何体与材质是模块级共享单例：顾客销毁时只移出场景，不 dispose（共享资源，dispose 会破坏其它顾客）。
+     参数化（收银员小任务）：opts 各项省略走随机；spawn()/_test 无参调用行为不变。 */
+  function buildBody(opts) {
+    opts = opts || {};
+    var shirtMat = matFor(bodyMats, opts.shirt || SHIRTS[G.randInt(0, SHIRTS.length - 1)]);
+    var pantsMat = matFor(bodyMats, opts.pants || PANTS[G.randInt(0, PANTS.length - 1)]);
+    var skinMat = matFor(bodyMats, opts.skin || SKINS[G.randInt(0, SKINS.length - 1)]);
+    var hairMat = matFor(bodyMats, opts.hair || HAIRS[G.randInt(0, HAIRS.length - 1)]);
     var shoeMat = matFor(bodyMats, SHOE_HEX);
 
     var g = new THREE.Group();
-    var h = G.rand(0.90, 1.08);
-    var w = G.rand(0.88, 1.22);
+    var h = (opts.h > 0) ? opts.h : G.rand(0.90, 1.08);
+    var w = (opts.w > 0) ? opts.w : G.rand(0.88, 1.22);
 
     var torso = new THREE.Mesh(TORSO_GEO, shirtMat);
     torso.position.y = 0.72;
     torso.scale.set(w, 1, w * 0.9);
     var head = new THREE.Mesh(HEAD_GEO, skinMat);
     head.position.y = 1.53;
-    var hair = new THREE.Mesh(HAIR_GEOS[G.randInt(0, HAIR_GEOS.length - 1)], hairMat);
+    var hair = new THREE.Mesh(
+      HAIR_GEOS[(opts.hairStyle >= 0 && opts.hairStyle < HAIR_GEOS.length) ? opts.hairStyle : G.randInt(0, HAIR_GEOS.length - 1)],
+      hairMat);
     hair.position.y = 1.70;
     var legL = new THREE.Mesh(LEG_GEO, pantsMat);
     legL.position.set(-0.115 * w, 0.72, 0);
@@ -485,6 +489,7 @@
     active: active,
     reset: reset,
     init: function (sc) { if (sc && sc.isScene) sceneRef = sc; },
+    buildFigure: function (opts) { return buildBody(opts); },
     _test: {
       spawnOne: function () {
         var body = buildBody();

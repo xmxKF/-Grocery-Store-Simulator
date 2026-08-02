@@ -119,6 +119,7 @@ G.shop.isUnlocked(pid) /*->bool 等级+许可证*/
 ```js
 G.customers.init(scene)  // main.js 启动时调用，记下 scene 引用（供 §手持道具/自测取 scene 用）
 G.customers.update(dt); G.customers.active /*[]*/; G.customers.reset()
+G.customers.buildFigure(opts /*{shirt?,pants?,skin?,hair?,hairStyle?,h?,w?} 省略项随机*/) // -> 顾客构造体（收银员站桩复用）
 ```
 - 营业中按 GDD 频率生成；FSM：`entering→shopping(逐个货架取货)→queueing→paying→leaving`。
 - 购物清单只从"已上架且已解锁"商品生成；对每件按 GDD 容忍度公式决定买/嫌贵放弃（嫌贵 emit toast 事件可选）。
@@ -179,7 +180,7 @@ G.clamp(v, a, b)
 - 时钟显示：ui.js 自行以 ~4Hz 轮询 `G.state.clock/open` 刷新，不设事件。
 - 收银员状态存 `G.state.cashier`（boolean）；自动收银逻辑在 checkout.js。
 - `'cashier'` {hired:boolean}：shop.hireCashier/fireCashier 成功后 emit；main.js 监听并调用 `G.world.setCashierVisible(hired)`，且在新游戏/读档后按 `G.state.cashier` 同步一次。
-- **G.world.setCashierVisible(visible)**：幂等；在收银台后侧放置/移除一个站桩低多边形收银员（体型同顾客规格，制服固定 `#4C9BE8`，不注册交互、不参与碰撞）。
+- **G.world.setCashierVisible(visible)**：幂等；在收银台后侧放置/移除一个站桩低多边形收银员（体型同顾客规格，制服固定 `#4C9BE8`，不注册交互、不参与碰撞）（自收银员美术升级起字面为真：经 `G.customers.buildFigure` 构造）。
 - 日终判定：main.js 检测 `clock 走完 && G.customers.active.length === 0`。
 - **上架飞行动画由 `world.js` 自行在内部 `requestAnimationFrame` 中驱动**，不接入 `main.js` 主循环的 dt。理由：与现有 `popInItem` 的驱动方式一致；飞行是纯视觉表现，与游戏逻辑解耦——`addItem` 返回时商品在逻辑上已在格内。
 - **价签贴图按 `(productId, price, state)` 三元组缓存 `CanvasTexture` 并复用；但每个价签持有各自的 `Material` 实例**，否则准星高亮会让同商品的所有价签一起发光。

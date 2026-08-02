@@ -449,26 +449,18 @@
 
   // ---------------------------------------------------------------
   // 收银员站桩（GDD §9 / CONTRACTS.md setCashierVisible）
-  // 体型同顾客规格：Box 身体 0.45×1.0×0.3 + Box 头 0.28³ + 两条 Box 腿。
-  // 站在收银台（buildCheckout：body x∈[-7.6,-6.4] z∈[-1,1]）与西墙（x∈[-8.1,-7.9]）之间的 0.3m 空隙，
-  // 朝 +x（registerFront/传送带/排队方向），躯干旋转 90° 后进深占 x 轴 0.3m，正好卡在空隙内不与柜台/传送带相交。
+  // 复用顾客 9 件构造（G.customers.buildFigure），固定形象；站在收银台与西墙之间
+  // 的 0.3m 空隙，旋转 90° 后身体进深占 x 轴（躯干 0.234 / 鞋 0.22 / 短块发 0.29 均 ≤0.3）。
   function buildCashierFigure() {
-    var uniformMat = flatMat(0x4C9BE8);   // CONTRACTS.md：制服固定 #4C9BE8
-    var skinMat = flatMat(0xC08B4E);      // 复用纸箱(满)色作肤色，保持 DESIGN.md 色板内中性暖色
-    var legMat = flatMat(0x3A424C);       // 复用仓储电脑机身色作裤子，DESIGN.md 已有的中性深色
-
-    var group = new THREE.Group();
-    var torso = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.0, 0.3), uniformMat);
-    torso.position.y = 1.05;
-    var head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.28), skinMat);
-    head.position.y = 1.69;
-    var legL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.55, 0.16), legMat);
-    legL.position.set(-0.11, 0.275, 0);
-    var legR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.55, 0.16), legMat);
-    legR.position.set(0.11, 0.275, 0);
-    torso.castShadow = head.castShadow = legL.castShadow = legR.castShadow = !!(G.tex && G.tex.on);
-    group.add(torso, head, legL, legR);
-
+    var body = G.customers.buildFigure({
+      shirt: '#4C9BE8',   // CONTRACTS：制服固定色
+      pants: '#2E3742',
+      skin: '#D9A878',
+      hair: '#2A2118',
+      hairStyle: 0,       // 短块：深度 0.29 ≤ 0.3m 空隙（后长 0.34/平顶 0.31 超限）
+      h: 1.0, w: 1.0
+    });
+    var group = body.group;
     group.position.set(-7.75, 0, 0);
     group.rotation.y = Math.PI / 2;   // 面朝 +x：传送带 / 排队方向
     return group;

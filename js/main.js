@@ -660,6 +660,29 @@
         ct.remove(gc);
       }
 
+      /* --- 收银员站桩美术（小任务）--- */
+      function findCashierGroup() {
+        var found = null, n = 0;
+        scene.traverse(function (o) {
+          if (o.isGroup && o.position.x === -7.75 && o.position.z === 0) { found = o; n++; }
+        });
+        return { group: found, n: n };
+      }
+      G.world.setCashierVisible(true);
+      var cf = findCashierGroup();
+      var cfMeshes = 0, cfShirtOk = false;
+      if (cf.group) cf.group.traverse(function (o) {
+        if (!o.isMesh) return;
+        cfMeshes++;
+        if (o.material && o.material.color && o.material.color.getHex() === 0x4C9BE8) cfShirtOk = true;
+      });
+      ck('world.cashierFigure', cf.n === 1 && cfMeshes === 9 && cfShirtOk,
+        '站桩组 ' + cf.n + ' 个，mesh ' + cfMeshes + '（应 9），制服色命中 ' + cfShirtOk);
+      G.world.setCashierVisible(true);
+      ck('world.cashierIdempotent', findCashierGroup().n === 1, '重复 setVisible(true) 不得复制');
+      G.world.setCashierVisible(false);
+      ck('world.cashierRemoved', findCashierGroup().n === 0, 'setVisible(false) 应移除');
+
       /* --- 上架飞行动画（Task 5）--- */
       var flySlot = G.world.findSlotWithProduct('f_noodle');
       // 上架已把该格填满到 slotCap，先腾 2 件容量；下面两次 addItem 正好补回，净库存不变
@@ -847,7 +870,7 @@
         }
       }
       var drawN = countDrawables(scene);
-      ck('perf.drawCallCeiling', drawN < 550, '满场轮转灌店+满员顾客手持 drawable=' + drawN + '，天花板 550（满场闸门实测 502 + ~10% 余量；含自测前序残留；干净启动满场为 497）');
+      ck('perf.drawCallCeiling', drawN < 550, '满场轮转灌店+满员顾客手持 drawable=' + drawN + '，天花板 550（满场闸门实测 ≈507 + ~8% 余量；含自测前序残留；干净启动满场为 502）');
 
       /* --- 渲染（无头环境可能没有 WebGL）--- */
       if (renderer) {
