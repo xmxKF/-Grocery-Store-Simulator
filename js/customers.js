@@ -258,7 +258,12 @@
       baseY: body.baseY,
       shirtMat: body.shirtMat,
       dims: body.dims,
-      moveTo: function (v) { this.path = [new THREE.Vector3(v.x, 0, v.z)]; },
+      lane: G.rand(-0.35, 0.35),
+      moveTo: function (v) {
+        var path = (G.world.nav && G.world.nav.findPath)
+          ? G.world.nav.findPath(this.mesh.position, v) : null;
+        this.path = (path && path.length) ? path : [new THREE.Vector3(v.x, 0, v.z)];
+      },
       atDestination: function () { return this.path.length === 0; },
       popItem: popItem,
       leaveStore: function () { leave(this); }
@@ -279,11 +284,22 @@
   function stepMove(c, dt) {
     if (!c.path.length) return;
     var t = c.path[0], p = c.mesh.position;
-    var dx = t.x - p.x, dz = t.z - p.z;
+    var tx = t.x, tz = t.z;
+    if (c.path.length > 1 && c.lane) {   // 中途节点沿行进法向偏移，终点/队列点不偏
+      var ndx = t.x - p.x, ndz = t.z - p.z;
+      var nl = Math.sqrt(ndx * ndx + ndz * ndz);
+      // 距路点小于偏移量时不再偏移：否则方向向量随 p 逼近 t 而退化，
+      // 每帧重算的法向会来回翻转，导致在路点附近原地摆动、永远到不了点
+      if (nl > Math.abs(c.lane)) {
+        tx += (-ndz / nl) * c.lane;
+        tz += (ndx / nl) * c.lane;
+      }
+    }
+    var dx = tx - p.x, dz = tz - p.z;
     var d = Math.sqrt(dx * dx + dz * dz);
     var step = num(cfg().customerSpeed, 1.6) * dt;
     if (d <= step || d < 1e-4) {
-      p.x = t.x; p.z = t.z;
+      p.x = tx; p.z = tz;
       c.path.shift();
     } else {
       p.x += dx / d * step;

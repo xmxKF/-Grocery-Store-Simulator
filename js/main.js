@@ -369,6 +369,22 @@
       }
       ck('world.zoneBWall', bWallOk, 'x=0 区界墙 collider 必须存在（B 区物理封锁）');
 
+      /* --- C-T2 寻路 --- */
+      ck('nav.api', typeof G.world.nav.findPath === 'function', '缺 findPath');
+      var p1 = G.world.nav.findPath(G.world.nav.entry, G.world.nav.aisleSpots[0]);
+      ck('nav.pathFound', Array.isArray(p1) && p1.length >= 1, 'entry→A区走廊 路径点 ' + (p1 && p1.length));
+      var pB = G.world.nav.findPath(G.world.nav.entry, new THREE.Vector3(-10, 0, 0));
+      ck('nav.gateBlocks', Array.isArray(pB) && pB.length === 0, '未购区域 B 必须不可达（返回 []）');
+      var clearOk = true;
+      if (p1 && p1.length) {
+        var prev = G.world.nav.entry;
+        for (var pi = 0; pi < p1.length && clearOk; pi++) {
+          if (G.world.nav._segBlocked(prev, p1[pi])) clearOk = false;
+          prev = p1[pi];
+        }
+      }
+      ck('nav.pathClear', clearOk, '路径各段不得穿 collider');
+
       /* --- 订货 --- */
       var m0 = G.state.money;
       var ordered = G.shop.orderBoxes([{ pid: 'f_noodle', qty: 1 }, { pid: 'd_water', qty: 1 }]);

@@ -353,6 +353,155 @@
   var registers = [];
   var shutterMeshes = [];
   var nav = { entry: null, exit: null, aisleSpots: [], registers: registers, queueSpots: [], registerFront: null };
+
+  // ---- C-T2 走廊节点图（从布局表推导；Dijkstra；门控 = node.enabled）----
+  var navNodes = [];
+  var NAV_INFLATE = 0.45;   // 线段-AABB 判定的膨胀半径（人身半径）
+
+  function segBlocked(a, b) {
+    for (var i = 0; i < colliders.length; i++) {
+      var c = colliders[i];
+      if (segHitsBox(a.x, a.z, b.x, b.z,
+        c.minX - NAV_INFLATE, c.maxX + NAV_INFLATE, c.minZ - NAV_INFLATE, c.maxZ + NAV_INFLATE)) return true;
+    }
+    return false;
+  }
+
+  /* 2D 线段与 AABB 相交（slab 法，含端点在盒内的情形） */
+  function segHitsBox(x1, z1, x2, z2, minX, maxX, minZ, maxZ) {
+    var dx = x2 - x1, dz = z2 - z1;
+    var t0 = 0, t1 = 1;
+    var p = [-dx, dx, -dz, dz];
+    var q = [x1 - minX, maxX - x1, z1 - minZ, maxZ - z1];
+    for (var i = 0; i < 4; i++) {
+      if (Math.abs(p[i]) < 1e-9) { if (q[i] < 0) return false; continue; }
+      var r = q[i] / p[i];
+      if (p[i] < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+      else { if (r < t0) return false; if (r < t1) t1 = r; }
+    }
+    return true;
+  }
+
+  function addNavNode(x, z, zone) {
+    var node = { p: new THREE.Vector3(x, 0, z), zone: zone, enabled: true, edges: [] };
+    navNodes.push(node);
+    return node;
+  }
+
+  function zoneOfPoint(x, z) {
+    var keys = ['W', 'C', 'B', 'A'];   // core 兜底
+    for (var i = 0; i < keys.length; i++) {
+      var r = ZONE_RECTS[keys[i]];
+      if (x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ) return keys[i];
+    }
+    return 'core';
+  }
+
+  function rebuildGraph() {
+    navNodes.length = 0;
+    // 1) 固定节点：entry/exit、主通道点、卷帘门内外点、收银台 front、走廊端点
+    addNavNode(nav.entry.x, nav.entry.z, 'core');
+    addNavNode(nav.exit.x, nav.exit.z, 'core');
+    // 前厅横向走廊（z=5.3，贯穿 core）
+    [-6, -2, 2, 6, 10, 14].forEach(function (x) { addNavNode(x, 5.3, 'core'); });
+    // A/B 主过道（z=0）：区界两侧 + 各 rack aisleSpot 由下面统一加
+    [1, 5, 9, 13].forEach(function (x) { addNavNode(x, 0, 'A'); });
+    [-14, -10, -6, -2].forEach(function (x) { addNavNode(x, 0, 'B'); });
+    // 前厅↔主过道竖向连接点（A 区开口 x=14 与 x=2 两条南北通路）
+    addNavNode(14, 2.6, 'A'); addNavNode(2, 2.6, 'A');
+    // 修复：上面两个连接点缺 z=0 端点，与 A 主过道完全不连通（核对：无此两点时 entry→A区走廊 图论不可达）
+    addNavNode(14, 0, 'A'); addNavNode(2, 0, 'A');
+    // C 区走廊（z=-7）
+    [-12, -6, 0, 6].forEach(function (x) { addNavNode(x, -7, 'C'); });
+    // 卷帘门内外点
+    addNavNode(-4, 4.9, 'core'); addNavNode(-4, 3.1, 'B');    // 门 B
+    addNavNode(4, -3.1, 'A');   addNavNode(4, -4.9, 'C');     // 门 C
+    addNavNode(-7.1, 7, 'core'); addNavNode(-8.9, 7, 'W');    // 门 W
+    // rack aisleSpot（已建的进 aisleSpots；未建区域的按表预置节点，enabled 随 zone）
+    for (var si = 0; si < SHELF_TABLE.length; si++) {
+      var st = SHELF_TABLE[si];
+      addNavNode(st.x, st.aisleZ, st.zone);
+    }
+    for (var fi = 0; fi < FRIDGE_TABLE.length; fi++) {
+      var ft = FRIDGE_TABLE[fi];
+      addNavNode(ft.x, ft.aisleZ, ft.zone);
+    }
+    // 收银台 front + 队尾（core）
+    for (var ri = 0; ri < REGISTER_TABLE.length; ri++) {
+      addNavNode(REGISTER_TABLE[ri].x, 6.8, 'core');
+      addNavNode(REGISTER_TABLE[ri].x, 3.8, 'core');
+    }
+    // 仓库内部两点 + 卸货区两点
+    addNavNode(-11.9, 7, 'W'); addNavNode(-14, 7, 'W');
+    addNavNode(18, 7.7, 'core'); addNavNode(-18, 5.5, 'W');
+    // 2) 启用态
+    syncNavGates();
+    // 3) 连边：轴对齐 + ≤10m + 无遮挡
+    for (var i = 0; i < navNodes.length; i++) {
+      for (var j = i + 1; j < navNodes.length; j++) {
+        var a = navNodes[i], b = navNodes[j];
+        var ax = Math.abs(a.p.x - b.p.x), az = Math.abs(a.p.z - b.p.z);
+        if (ax > 0.05 && az > 0.05) continue;
+        var d = a.p.distanceTo(b.p);
+        if (d > 10 || d < 0.01) continue;
+        if (segBlocked(a.p, b.p)) continue;
+        a.edges.push({ idx: j, w: d });
+        b.edges.push({ idx: i, w: d });
+      }
+    }
+  }
+
+  function syncNavGates() {
+    var zones = (G.state && G.state.zones) || { A: true };
+    for (var i = 0; i < navNodes.length; i++) {
+      var n = navNodes[i];
+      n.enabled = (n.zone === 'core') || !!zones[n.zone];
+    }
+  }
+
+  function nearestNode(p) {
+    var best = -1, bd = Infinity;
+    for (var i = 0; i < navNodes.length; i++) {
+      var n = navNodes[i];
+      if (!n.enabled) continue;
+      var d = n.p.distanceToSquared(p);
+      if (d < bd && !segBlocked(p, n.p)) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  function findPath(from, to) {
+    if (!navNodes.length) return [];
+    var s = nearestNode(from), t = nearestNode(to);
+    if (s < 0 || t < 0) return [];
+    // Dijkstra（N~70，线性扫描堆足够）
+    var dist = [], prev = [], done = [];
+    for (var i = 0; i < navNodes.length; i++) { dist[i] = Infinity; prev[i] = -1; done[i] = false; }
+    dist[s] = 0;
+    for (var iter = 0; iter < navNodes.length; iter++) {
+      var u = -1, ud = Infinity;
+      for (var k = 0; k < navNodes.length; k++) {
+        if (!done[k] && dist[k] < ud) { ud = dist[k]; u = k; }
+      }
+      if (u < 0 || u === t) break;
+      done[u] = true;
+      var edges = navNodes[u].edges;
+      for (var e = 0; e < edges.length; e++) {
+        var v = edges[e].idx;
+        if (!navNodes[v].enabled || done[v]) continue;
+        var nd = dist[u] + edges[e].w;
+        if (nd < dist[v]) { dist[v] = nd; prev[v] = u; }
+      }
+    }
+    if (dist[t] === Infinity) return [];
+    var out = [];
+    var cur = t;
+    while (cur !== -1) { out.unshift(navNodes[cur].p.clone()); cur = prev[cur]; }
+    out.push(new THREE.Vector3(to.x, 0, to.z));
+    // 首节点若与起点视线通畅且距离近可省略——保持简单：不裁剪
+    return out;
+  }
+
   var cashierGroup = null;
   var cashierVisible = false;
 
@@ -512,6 +661,9 @@
     // 废弃字段：指向 R1 的等价值，让 checkout 的单台代码继续工作——T3 重构后删除
     nav.registerFront = registers[0].front;
     nav.queueSpots = registers[0].queueSpots;
+    nav.findPath = findPath;
+    nav.rebuildGraph = rebuildGraph;
+    nav._segBlocked = segBlocked;
   }
 
   function buildRegister(i) {
@@ -577,7 +729,7 @@
     if (zone === 'B' && !registerAt(1)) buildRegister(1);
     if (zone === 'C' && !registerAt(2)) buildRegister(2);
     // zone === 'W' 的仓库存储架由 T4 建造（STORAGE_TABLE 已就位）
-    if (nav.rebuildGraph) nav.rebuildGraph();   // 寻路节点门控由 T2 接入
+    rebuildGraph();   // 该区货架建造新增 collider → 边失效，全量重建（微秒级）
   }
 
   // ---------------------------------------------------------------
@@ -927,6 +1079,7 @@
     sceneRef = scene;
     buildRoom();
     syncLayout();
+    rebuildGraph();
   }
 
   window.G = window.G || {};
