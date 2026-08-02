@@ -892,7 +892,25 @@
       }
       G.state.level = 10;
       G.state.licenses = ['食品', '饮料', '日用品', '生鲜'];
+      G.world.buildZone('B');
+      G.world.buildZone('C');
+      G.world.buildZone('W');
       G.world.syncLayout();
+
+      /* C-T2 修复轮：全开态关键点连通性（区域孤岛与死节点的回归防线） */
+      var navAllOk = true, navBad = '';
+      var navProbe = [G.world.nav.entry, G.world.nav.exit];
+      for (var np = 0; np < G.world.nav.aisleSpots.length; np++) navProbe.push(G.world.nav.aisleSpots[np]);
+      for (var nr = 0; nr < G.world.nav.registers.length; nr++) {
+        navProbe.push(G.world.nav.registers[nr].front);
+        navProbe.push(G.world.nav.registers[nr].queueSpots[0]);
+      }
+      for (var na = 1; na < navProbe.length && navAllOk; na++) {
+        var pp2 = G.world.nav.findPath(navProbe[0], navProbe[na]);
+        if (!pp2 || !pp2.length) { navAllOk = false; navBad = 'entry→#' + na + ' 不可达'; }
+      }
+      ck('nav.fullOpenConnected', navAllOk, navBad || '全开态 entry→全部关键点可寻路');
+
       G.world.setCashierVisible(true);
       /* 轮转灌店：外层轮次、内层商品 → 逼出 ≤24 组实例池上限（顺序灌店只会建 2 组） */
       var fillGuard = 0, filled = true;

@@ -407,15 +407,23 @@
     // A/B 主过道（z=0）：区界两侧 + 各 rack aisleSpot 由下面统一加
     [1, 5, 9, 13].forEach(function (x) { addNavNode(x, 0, 'A'); });
     [-14, -10, -6, -2].forEach(function (x) { addNavNode(x, 0, 'B'); });
-    // 前厅↔主过道竖向连接点（A 区开口 x=14 与 x=2 两条南北通路）
-    addNavNode(14, 2.6, 'A'); addNavNode(2, 2.6, 'A');
+    // 前厅↔主过道竖向连接点（A 区开口 x=14 与 x=1.1 两条南北通路；x=1.1 订正：
+    // 原 x=2 落在货架膨胀盒内，真实空隙在 x∈(0.65,1.55)，复核见 task-2-report.md）
+    addNavNode(14, 2.6, 'A'); addNavNode(1.1, 2.6, 'A');
     // 修复：上面两个连接点缺 z=0 端点，与 A 主过道完全不连通（核对：无此两点时 entry→A区走廊 图论不可达）
-    addNavNode(14, 0, 'A'); addNavNode(2, 0, 'A');
+    addNavNode(14, 0, 'A'); addNavNode(1.1, 0, 'A');
     // C 区走廊（z=-7）
     [-12, -6, 0, 6].forEach(function (x) { addNavNode(x, -7, 'C'); });
-    // 卷帘门内外点
-    addNavNode(-4, 4.9, 'core'); addNavNode(-4, 3.1, 'B');    // 门 B
+    // 卷帘门内外点。B 门列统一改 x=-4.2（原 x=-4 距冷藏膨胀边仅 0.05m，弃用）：
+    // 门外(-4.2,4.9)—前厅接点(-4.2,5.3)—门内(-4.2,3.1)—B 内竖廊底(-4.2,0) 四点同列串联，
+    // 复核余量：距翼墙膨胀边 0.35m+ / 距冷藏膨胀边 0.25m+
+    addNavNode(-4.2, 5.3, 'core');
+    addNavNode(-4.2, 4.9, 'core'); addNavNode(-4.2, 3.1, 'B');    // 门 B
+    addNavNode(-4.2, 0, 'B');
     addNavNode(4, -3.1, 'A');   addNavNode(4, -4.9, 'C');     // 门 C
+    addNavNode(5, -3.1, 'A');    // C 门 A 侧接入 A 主过道 x=5（(4,-3.1)-(5,-3.1)-(5,0) 两段无遮挡）
+    addNavNode(4, -7, 'C');      // C 门 C 侧接入 C 走廊（原 brief 只接了 A 侧，C 侧仍孤立，补一点用 x=4 列打通）
+    addNavNode(-7.1, 5.3, 'core');   // W 门前厅接点（原 (-7.1,7) 与前厅走廊无公共坐标，孤立）
     addNavNode(-7.1, 7, 'core'); addNavNode(-8.9, 7, 'W');    // 门 W
     // rack aisleSpot（已建的进 aisleSpots；未建区域的按表预置节点，enabled 随 zone）
     for (var si = 0; si < SHELF_TABLE.length; si++) {
@@ -426,14 +434,15 @@
       var ft = FRIDGE_TABLE[fi];
       addNavNode(ft.x, ft.aisleZ, ft.zone);
     }
-    // 收银台 front + 队尾（core）
+    // 收银台队尾（core）：front（z=6.8）节点不建——三台收银台的 front 坐标都落在
+    // 各自柜台膨胀盒内，任何方向的出边判定都会自阻塞，是永远零边的死节点；
+    // 交给 nearestNode 的降级兜底去接最近的通路节点，最后一段直线短接（可接受）
     for (var ri = 0; ri < REGISTER_TABLE.length; ri++) {
-      addNavNode(REGISTER_TABLE[ri].x, 6.8, 'core');
       addNavNode(REGISTER_TABLE[ri].x, 3.8, 'core');
     }
-    // 仓库内部两点 + 卸货区两点
+    // 仓库内部两点 + 卸货区两点（西卸货点订正 z=5.5→7：西门缺口膨胀后可通行带 z∈(6.45,7.55)）
     addNavNode(-11.9, 7, 'W'); addNavNode(-14, 7, 'W');
-    addNavNode(18, 7.7, 'core'); addNavNode(-18, 5.5, 'W');
+    addNavNode(18, 7.7, 'core'); addNavNode(-18, 7, 'W');
     // 2) 启用态
     syncNavGates();
     // 3) 连边：轴对齐 + ≤10m + 无遮挡
@@ -460,18 +469,25 @@
   }
 
   function nearestNode(p) {
-    var best = -1, bd = Infinity;
+    var best = -1, bd = Infinity, bestAny = -1, bdAny = Infinity;
     for (var i = 0; i < navNodes.length; i++) {
       var n = navNodes[i];
       if (!n.enabled) continue;
       var d = n.p.distanceToSquared(p);
+      if (d < bdAny) { bdAny = d; bestAny = i; }
       if (d < bd && !segBlocked(p, n.p)) { bd = d; best = i; }
     }
-    return best;
+    return best >= 0 ? best : bestAny;
   }
 
   function findPath(from, to) {
     if (!navNodes.length) return [];
+    // 修复：nearestNode 降级（I2）只忽略视线遮挡，不管门控——查询点落在未购区域时，
+    // bestAny 会无视墙体直接抓一个"最近的已连通节点"当作 t，等于把锁区凿穿。
+    // 目的地本身若在未购区域，直接判不可达，不进入降级逻辑。
+    var toZone = zoneOfPoint(to.x, to.z);
+    var gateZones = (G.state && G.state.zones) || { A: true };
+    if (toZone !== 'core' && !gateZones[toZone]) return [];
     var s = nearestNode(from), t = nearestNode(to);
     if (s < 0 || t < 0) return [];
     // Dijkstra（N~70，线性扫描堆足够）
