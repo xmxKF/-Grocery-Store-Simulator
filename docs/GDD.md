@@ -73,14 +73,14 @@
   2. `shopping` — 到位后停 **1.2s**，每件取货耗时 **0.4s**（调 `G.world.removeItem`），逐条处理清单。
      本阶段总时长上限 **45s**；超时则带着已拿商品直接去排队。
      若清单全部落空（缺货或嫌贵）→ 直接 `leaving`，`emit('customerLeft',{angry:false,reason:'no_stock'})`，**XP -1**。
-  3. `queueing` — 走到 `nav.queueSpots` 空位（共 5 个）。队列已满 → 弃购离店，`angry:true, reason:'queue_full'`，**XP -2**（商品视为损耗，计入 cogs）。
+  3. `queueing` — 走到排最短队的收银台队列（每台 5 位）。队列已满 → 弃购离店，`angry:true, reason:'queue_full'`，**XP -2**（商品视为损耗，计入 cogs）。
      **耐心 `patienceSec = 60` 秒**从入队开始计时，超时 → 弃购离店 `angry:true, reason:'impatient'`，**XP -3**，商品计入损耗。
-  4. `paying` — 队首走到 `nav.registerFront`，把商品逐件放上传送带（0.2s/件）。等待玩家扫码。
+  4. `paying` — 队首走到该台台前，把商品逐件放上传送带（0.2s/件）。等待玩家扫码。
   5. `leaving` — 从 `nav.exit` 走出，2 秒后销毁 mesh。
 - 顾客外形：低多边形（Box 身体 0.45×1.0×0.3 + Box 头 0.28³ + 两条 Box 腿），随机取 `DESIGN.md` 顾客色板一色。**无碰撞、可互相穿过**。
 
 ## 7. 收银系统（`js/checkout.js` + `#pos`）
-- 走近收银台按 `E` → `enterRegister()`：锁定视角朝传送带，显示 POS 面板；`Esc` 退出。
+- 走近收银台按 `E` → `enterRegister(收银台交互体)`：锁定视角朝传送带，显示 POS 面板；`Esc` 退出。
 - **扫码**：左键点击传送带上的商品 mesh → 小计累加 `G.state.prices[pid]`，商品移入「已扫区」，冷却 **0.3s**，**每件 +2 XP**。
 - 扫完点「结算」：
   - 若仍有**未扫商品** → 这些商品白送：`G.addMoney(-Σ进价, 'miss_scan')`，**XP -3**，toast「漏扫了！」。

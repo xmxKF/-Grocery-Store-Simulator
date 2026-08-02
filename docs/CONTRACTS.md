@@ -152,6 +152,7 @@ G.checkout.stance   // null | {pos: THREE.Vector3, yaw: Number, pitch: Number}�
 G.checkout.activeRegisterId   // 只读；玩家当前所在台 index，未进入时 null
 G.checkout._test    // 自测钩子：tx(i=0)/scanAll(i=0)/settle(i=0)/payCard(i=0)/registers()，i 缺省 0，仅 ?selftest 使用
 ```
+- `joinQueue(c)`：在已建收银台中选 `queue.length` 最小者入队（并列取低 index），全部满则返回 false。
 - 队首顾客把商品放上传送带（小 mesh 排开）；玩家逐件点击扫码（总价累计显示于 #pos）。
 - 扫完 → 付款：现金（显示顾客给的钞票，玩家从零钱面板点选找零，找错多找的部分损失）或刷卡（点读卡器直接成交）。
 - 成交：`G.addMoney(total,'sale')`、`G.addXP`、更新 dayStats、emit `'sale'`，顾客离店。
@@ -191,7 +192,7 @@ G.clamp(v, a, b)
 - `'toggleOpen'` {}：player 按 `O` 时 emit；**main.js** 处理开门/打烊逻辑。
 - `'nextDay'` {}：ui 日结算按钮 emit；**main.js** 处理进入次日 + `G.save()`。
 - `'license'` {cat}：shop.buyLicense 成功后 emit。
-- **G.world.syncLayout()**：幂等；读取 `G.state.level` 与 `G.state.licenses`，把货架/冷藏柜/扩建补齐到 GDD §4 表的目标状态。main.js 在 `'levelup'`、`'license'`、读档后调用。
+- **G.world.syncLayout()**：幂等；读取 `G.state.zones`、`G.state.level` 与 `G.state.licenses`，把已开放区域的货架/冷藏柜补齐到 GDD §4 区域表的目标状态。main.js 在 `'levelup'`、`'license'`、读档后调用。
 - `#pos` 内部 DOM 由 **checkout.js** 全权构建（用上面共享类名）；其余 screen 的 DOM 由 ui.js 构建。
 - 时钟显示：ui.js 自行以 ~4Hz 轮询 `G.state.clock/open` 刷新，不设事件。
 - 收银员状态存 `G.state.registers[i].staffed`；`G.state.cashier` 废弃（仅迁移期兼容读）；自动收银逻辑在 checkout.js。
@@ -199,7 +200,7 @@ G.clamp(v, a, b)
 - **G.world.setCashierVisible(index, visible)**：幂等；在指定收银台（`registers[index]`）后侧放置/移除一个站桩低多边形收银员（体型同顾客规格，制服固定 `#4C9BE8`，不注册交互、不参与碰撞）（自收银员美术升级起字面为真：经 `G.customers.buildFigure` 构造）。
 - 日终判定：main.js 检测 `clock 走完 && G.customers.active.length === 0`。
 - **上架飞行动画由 `world.js` 自行在内部 `requestAnimationFrame` 中驱动**，不接入 `main.js` 主循环的 dt。理由：与现有 `popInItem` 的驱动方式一致；飞行是纯视觉表现，与游戏逻辑解耦——`addItem` 返回时商品在逻辑上已在格内。
-- **价签贴图按 `(productId, price, state)` 三元组缓存 `CanvasTexture` 并复用；但每个价签持有各自的 `Material` 实例**，否则准星高亮会让同商品的所有价签一起发光。
+- **价签贴图按 `(productId, price, state)` 三元组缓存 `CanvasTexture` 并复用；但每个价签持有各自的 `Material` 实例**，否则准星高亮会让同商品的所有价签一起发光（C-T7 起改为 `(productId, state)` 二元组，改价 dispose 旧条）。
 - 商品实例池：world.js 内部按 pid 维护 InstancedMesh（G.world._instPools 仅供自测），
   增删一律 rebuildProduct(pid) 全量重建；实例颜色一律走 per-pid 材质，不使用 instanceColor/setColorAt——不是能力缺失（本构建支持），而是架构必然：每个商品的 labelBand 贴图不同，材质本就必须 per-pid，instanceColor 只能合并同 (shape,accent) 组、收益不抵复杂度。
 - 上架飞行动画队列 `G.world._flights`（仅供自测）：`[{mesh, from, to, t0, slot, onDone, pid, idx}]`，`stepFlights` 自驱 rAF 消费。
