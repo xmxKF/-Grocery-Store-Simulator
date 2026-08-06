@@ -48,7 +48,8 @@
     carrying: null,
     camera: null,
     getPose: getPose,
-    setPose: setPose
+    setPose: setPose,
+    _test: { prompt: function (entry) { return computePrompt(entry); } }
   };
 
   // ---- 初始化 ----
@@ -428,9 +429,12 @@
     if (type === 'shutter') {
       var sd = entry.data || {};
       if (G.state.zones && G.state.zones[sd.zone]) return null;   // 已开放
-      if (G.state.level < sd.lv) return '需 Lv' + sd.lv + ' 才能开放' + sd.label;
-      if (G.state.money < sd.price) return '资金不足：开放' + sd.label + '需 ' + G.fmt(sd.price);
-      return '[E] 开放' + sd.label + '（' + G.fmt(sd.price) + ' · 需 Lv' + sd.lv + '）';
+      // 价格/等级读 CONFIG（与 shop.buyZone 同源），否则改 CONFIG 会「显示旧价、扣新价」
+      var sdLv = G.data.CONFIG.zoneLevels[sd.zone];
+      var sdPrice = G.data.CONFIG.zonePrices[sd.zone];
+      if (G.state.level < sdLv) return '需 Lv' + sdLv + ' 才能开放' + sd.label;
+      if (G.state.money < sdPrice) return '资金不足：开放' + sd.label + '需 ' + G.fmt(sdPrice);
+      return '[E] 开放' + sd.label + '（' + G.fmt(sdPrice) + ' · 需 Lv' + sdLv + '）';
     }
 
     if (type === 'box') {

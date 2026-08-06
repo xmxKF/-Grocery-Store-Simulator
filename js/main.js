@@ -473,6 +473,24 @@
       ck('shop.buyZoneGates', G.shop.buyZone('B') === false && G.state.money === bzBefore,
         'Lv1 买区域 B 必须被等级门槛拒绝且不扣钱');
 
+      /* C-T7：卷帘门价格/等级单一真相在 CONFIG——提示文案若还读 SHUTTERS 表的副本，
+         改 CONFIG 会「显示旧价、扣新价」。临时改 CONFIG 后提示必须跟着变 */
+      var shEntry = null;
+      for (var shi = 0; shi < G.world.interactables.length && !shEntry; shi++) {
+        var shIt = G.world.interactables[shi];
+        if (shIt.type === 'shutter' && shIt.data.zone === 'B') shEntry = shIt;
+      }
+      var zpB = G.data.CONFIG.zonePrices.B, zlB = G.data.CONFIG.zoneLevels.B;
+      var shTxt = '';
+      G.data.CONFIG.zonePrices.B = 4242; G.data.CONFIG.zoneLevels.B = 9;
+      try {
+        shTxt = shEntry ? String(G.player._test.prompt(shEntry)) : '(无卷帘门交互体)';
+      } finally {
+        G.data.CONFIG.zonePrices.B = zpB; G.data.CONFIG.zoneLevels.B = zlB;
+      }
+      ck('shop.shutterPriceSingleSource', shTxt.indexOf('Lv9') !== -1,
+        '把 CONFIG 的 B 区门槛改成 Lv9/4242 后，卷帘门提示 = ' + shTxt);
+
       /* --- 订货 --- */
       var m0 = G.state.money;
       var ordered = G.shop.orderBoxes([{ pid: 'f_noodle', qty: 1 }, { pid: 'd_water', qty: 1 }]);
@@ -480,6 +498,14 @@
       ck('shop.order', ordered === true, '返回 ' + ordered);
       ck('shop.charge', Math.abs((m0 - G.state.money) - expCost) < 0.01, '扣款 ' + round2(m0 - G.state.money) + ' / 预期 ' + expCost);
       ck('shop.lockedRejected', G.shop.orderBoxes([{ pid: 'p_apple', qty: 1 }]) === false, '未解锁商品应拒单');
+
+      /* C-T7：订货容量判据必须单一真相——UI 只看院内箱数会漏掉在途队列，
+         出现「按钮可点、下单静默失败」。现场：院内 0 箱 + 上面订的 2 箱在途 */
+      var roomFn = G.shop.yardHasRoomFor;
+      var roomHas = typeof roomFn === 'function';
+      ck('shop.yardRoomSingleSource', roomHas && roomFn(10) === true && roomFn(11) === false,
+        roomHas ? ('院内 0 + 在途 2：判据 10 箱→' + roomFn(10) + '、11 箱→' + roomFn(11) + '（应 true/false）')
+                : 'G.shop.yardHasRoomFor 缺失：UI 与 orderBoxes 仍是两套判据');
 
       /* --- 强制送达 --- */
       G.shop.update(G.data.CONFIG.deliverySec + 2);
@@ -1107,6 +1133,20 @@
         return rr.zones.W === true;
       })(), 'zones 入档往返');
 
+      /* --- C-T7 治漏与上限 --- */
+      for (var pi2 = 0; pi2 < 200; pi2++) G.shop.setPrice('f_noodle', 2.0 + (pi2 % 30) * 0.1);
+      var ts = G.world._tagStats();
+      var texCountAfter = 0, tk;
+      for (tk in ts.cache) texCountAfter++;
+      ck('world.tagTexNoLeak', texCountAfter <= 72 && ts.disposed > 0,
+        '改价 200 次后缓存 ' + texCountAfter + '（≤72），disposed=' + ts.disposed);
+      G.shop.setPrice('f_noodle', 2.2);
+      var capC = G.customers._test.spawnOne();
+      for (var hc = 0; hc < 12; hc++) G.customers._test.addHand(capC, 'f_noodle');
+      var handMeshes = capC.hands.children.length;
+      ck('cust.handVisualCap', handMeshes === 6, '12 件手持只渲染 ' + handMeshes + '（应 6）');
+      G.customers._test.remove(capC);
+
       /* --- 性能总闸门（B-T7）：会脏化 state，必须放在存档往返之后 --- */
       function countDrawables(node) {
         if (node.visible === false) return 0;
@@ -1147,9 +1187,11 @@
         '世界台 ' + G.world.registers.length + ' / checkout 台 ' + G.checkout._test.registers().length);
 
       G.world.setCashierVisible(0, true);
+      G.world.setCashierVisible(1, true);
+      G.world.setCashierVisible(2, true);
       /* 轮转灌店：外层轮次、内层商品 → 逼出 ≤24 组实例池上限（顺序灌店只会建 2 组） */
       var fillGuard = 0, filled = true;
-      while (filled && fillGuard < 5000) {
+      while (filled && fillGuard < 20000) {
         filled = false;
         for (var fpi = 0; fpi < G.data.PRODUCTS.length; fpi++) {
           var fpid = G.data.PRODUCTS[fpi].id;
@@ -1157,17 +1199,36 @@
           if (fSlot && G.world.addItem(fSlot, fpid)) { filled = true; fillGuard++; }
         }
       }
-      /* 卸货区堆箱上限情形 + 满场顾客满手持（绝对最坏负载） */
-      for (var bi = 0; bi < 24; bi++) G.world.spawnBox(G.data.PRODUCTS[bi % G.data.PRODUCTS.length].id);
-      for (var ci = 0; ci < 14; ci++) {
-        var pc = G.customers._test.spawnOne();
-        for (var hi = 0; hi < 12; hi++) {
-          var hpid = G.data.PRODUCTS[hi % G.data.PRODUCTS.length].id;
-          pc.hands.add(new THREE.Mesh(G.world.itemGeoFor(hpid), G.world.itemMatFor(hpid)));
+      /* 绝对最坏负载：仓库 24 位 + 卸货区 12 位全占 + 20 客 ×12 件手持（渲染封顶 6）。
+         仓库位必须显式给落点——spawnBox 无参只认卸货区 12 位，前序断言已占掉一部分 */
+      var stFilled = 0;
+      for (var sbi = 0; sbi < G.world.storageSlots.length; sbi++) {
+        var stS = G.world.storageSlots[sbi];
+        if (!stS.box) {
+          var sb = G.world.spawnBox(G.data.PRODUCTS[sbi % G.data.PRODUCTS.length].id, stS.pos);
+          if (sb) stS.box = sb;
         }
+        if (stS.box) stFilled++;
       }
+      for (var pbi = 0; pbi < 12; pbi++) G.world.spawnBox(G.data.PRODUCTS[pbi % G.data.PRODUCTS.length].id);
+      var yardTotal = 0;
+      for (var yti = 0; yti < G.world.interactables.length; yti++) {
+        var ytIt = G.world.interactables[yti];
+        if (ytIt.type === 'box' && G.world.isOnYard(ytIt.mesh)) yardTotal++;
+      }
+      var handRendered = 0;
+      for (var ci = 0; ci < 20; ci++) {
+        var pc = G.customers._test.spawnOne();
+        for (var hi = 0; hi < 12; hi++) G.customers._test.addHand(pc, G.data.PRODUCTS[hi % G.data.PRODUCTS.length].id);
+        handRendered = pc.hands.children.length;
+      }
+      var slotsStocked = 0;
+      for (var sfi = 0; sfi < G.world.slots.length; sfi++) if (G.world.slots[sfi].count > 0) slotsStocked++;
       var drawN = countDrawables(scene);
-      ck('perf.drawCallCeiling', drawN < 700, '满场轮转灌店+满员顾客手持 drawable=' + drawN + '，天花板 700（C-T1 壳体+围栏增量后的临时口径；T7 随全区开放统一定 760）');
+      ck('perf.drawCallCeiling', drawN < 760,
+        '满配 drawable=' + drawN + '，天花板 760｜货架 ' + slotsStocked + '/' + G.world.slots.length +
+        ' 格有货、收银 3 台、仓库 ' + stFilled + ' 箱、卸货区 ' + yardTotal + ' 箱、测试顾客 20 名 + 在场 ' +
+        G.customers.active.length + ' 名（每客塞 12 件手持，实渲染 ' + handRendered + '）');
 
       /* --- 渲染（无头环境可能没有 WebGL）--- */
       if (renderer) {

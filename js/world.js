@@ -24,10 +24,11 @@
   };
 
   /* 卷帘门：购买后 mesh 隐藏 + collider 移除 + 节点启用 */
+  /* 价格/等级门槛不在此表：单一真相是 CONFIG.zonePrices / zoneLevels（shop.buyZone 与提示文案同源） */
   var SHUTTERS = [
-    { zone: 'B', minX: -5, maxX: -3, z: 4,  price: 1500, lv: 5, label: '区域 B' },   // 内墙 z=+4 上
-    { zone: 'C', minX: 3,  maxX: 5,  z: -4, price: 3200, lv: 8, label: '区域 C' },   // 内墙 z=-4 上
-    { zone: 'W', x: -8, minZ: 6, maxZ: 8,   price: 900,  lv: 3, label: '仓库' }      // 仓库东墙 x=-8 上
+    { zone: 'B', minX: -5, maxX: -3, z: 4,  label: '区域 B' },   // 内墙 z=+4 上
+    { zone: 'C', minX: 3,  maxX: 5,  z: -4, label: '区域 C' },   // 内墙 z=-4 上
+    { zone: 'W', x: -8, minZ: 6, maxZ: 8,   label: '仓库' }      // 仓库东墙 x=-8 上
   ];
 
   /* 货架表：zone + 中心 + aisleZ（buildRack 朝向与服务点由 aisleZ 推导） */
@@ -298,13 +299,24 @@
     return HIT_GEO;
   }
 
-  // 价签贴图缓存：键为 (state|pid|price)，texture 跨格复用；材质仍逐格独立（见 CONTRACTS 职责裁定）
+  // 价签贴图缓存：键为 (state|pid)，texture 跨格复用；材质仍逐格独立（见 CONTRACTS 职责裁定）。
+  // 价格不入键：入键的话每改一次价就多留一张永不回收的贴图（C-T7 治漏）
   var TAG_TEX = {};
+  var tagTexDisposed = 0;
   var TAG_BG = { stocked: null, out: '#E8B54C', empty: '#8C9AA6' };   // stocked 用类目色，运行时填
 
   function tagTexture(state, product, price) {
-    var key = state + '|' + (product ? product.id : '-') + '|' + (price == null ? '-' : price);
-    if (TAG_TEX[key]) return TAG_TEX[key];
+    var key = state + '|' + (product ? product.id : '-');
+    var hit = TAG_TEX[key];
+    // stocked 贴图上画了价格：同 pid 改价必须重绘。旧贴图当场 dispose 并删条目，
+    // 不留在缓存里堆积（setPrice 会把该 pid 的所有格位同步刷到新贴图，无悬挂引用）
+    if (hit && state === 'stocked' && hit._price !== price) {
+      hit.dispose();
+      tagTexDisposed++;
+      delete TAG_TEX[key];
+      hit = null;
+    }
+    if (hit) return hit;
 
     var W = 256, H = 28;
     var cv = document.createElement('canvas');
@@ -332,6 +344,7 @@
 
     var tex = new THREE.CanvasTexture(cv);
     tex.needsUpdate = true;
+    tex._price = price;
     TAG_TEX[key] = tex;
     return tex;
   }
@@ -603,7 +616,7 @@
       shutterMeshes.push(m);
       registerInteractable(m, {
         type: 'shutter',
-        data: { zone: s.zone, price: s.price, lv: s.lv, label: s.label },
+        data: { zone: s.zone, label: s.label },
         prompt: ''   // 文案由 player.computePrompt 按条件生成（T3）
       });
     }
@@ -1235,6 +1248,7 @@
     setCashierVisible: setCashierVisible,
     itemGeoFor: itemGeoFor,
     itemMatFor: itemMatFor,
+    _tagStats: function () { return { cache: TAG_TEX, disposed: tagTexDisposed }; },
     _instPools: instPools,
     _flights: flights
   };

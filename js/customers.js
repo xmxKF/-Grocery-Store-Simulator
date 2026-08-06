@@ -156,6 +156,8 @@
   }
 
   function addHandCube(c, pid) {
+    // 渲染上限：手上超过 6 件不再建 mesh（逻辑 items 由调用方维护，购物车总量不受影响）
+    if (c.hands.children.length >= 6) { layoutHands(c); return; }
     var product = G.data.productById(pid);
     var psc = product && product.scale;
     var m = new THREE.Mesh(G.world.itemGeoFor(pid), G.world.itemMatFor(pid));
@@ -523,6 +525,7 @@
         return c;
       },
       gait: function (c, dt, moving) { applyGait(c, dt, moving); },
+      addHand: function (c, pid) { addHandCube(c, pid); },
       remove: function (c) { if (c.mesh.parent) c.mesh.parent.remove(c.mesh); }
     }
   };

@@ -79,16 +79,6 @@
     return sum;
   }
 
-  /* 卸货区箱位上现存箱数（仓库存箱不计），与 shop.js 的上限判定口径一致 */
-  function yardBoxCount() {
-    var list = (G.world && G.world.interactables) || [];
-    var n = 0;
-    for (var i = 0; i < list.length; i++) {
-      if (list[i].type === 'box' && G.world.isOnYard(list[i].mesh)) n++;
-    }
-    return n;
-  }
-
   /* ---------------------------------------------------------------
      #screen-menu
   --------------------------------------------------------------- */
@@ -376,7 +366,7 @@
     box.appendChild(totalLine);
 
     var afford = totalCost <= G.state.money;
-    var yardFull = yardBoxCount() + totalQty > G.data.CONFIG.maxBoxesInYard;   // GDD §3
+    var yardFull = !G.shop.yardHasRoomFor(totalQty);   // GDD §3；判据与 orderBoxes 同源（含在途队列）
     var confirmBtn = el('button', 'btn btn-primary', '确认下单');
     confirmBtn.style.width = '100%';
     if (!pids.length || !afford || yardFull) confirmBtn.setAttribute('disabled', 'disabled');

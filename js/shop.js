@@ -28,6 +28,11 @@
     return count;
   }
 
+  /* 卸货区容量判据的单一真相：在途队列必须计入，否则 UI 会放行一笔 orderBoxes 静默拒绝的单 */
+  function yardHasRoomFor(qty) {
+    return countYardBoxes() + deliveryQueue.length + qty <= G.data.CONFIG.maxBoxesInYard;
+  }
+
   function isUnlocked(pid) {
     var p = G.data.productById(pid);
     if (!p) return false;
@@ -45,8 +50,7 @@
     if (totalBoxes <= 0) return false;
     if (totalBoxes > getMaxBoxesPerOrder()) return false;
 
-    var yardCount = countYardBoxes();
-    if (yardCount + deliveryQueue.length + totalBoxes > G.data.CONFIG.maxBoxesInYard) return false;
+    if (!yardHasRoomFor(totalBoxes)) return false;
 
     var cost = 0;
     cart.forEach(function (e) {
@@ -163,6 +167,7 @@
 
   G.shop = {
     orderBoxes: orderBoxes,
+    yardHasRoomFor: yardHasRoomFor,
     update: update,
     setPrice: setPrice,
     buyLicense: buyLicense,
