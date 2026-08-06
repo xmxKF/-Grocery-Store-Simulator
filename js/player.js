@@ -433,7 +433,7 @@
       var sdLv = G.data.CONFIG.zoneLevels[sd.zone];
       var sdPrice = G.data.CONFIG.zonePrices[sd.zone];
       if (G.state.level < sdLv) return '需 Lv' + sdLv + ' 才能开放' + sd.label;
-      if (G.state.money < sdPrice) return '资金不足：开放' + sd.label + '需 ' + G.fmt(sdPrice);
+      if (G.state.money < sdPrice) return '资金不足：开放' + sd.label + ' 需 ' + G.fmt(sdPrice);
       return '[E] 开放' + sd.label + '（' + G.fmt(sdPrice) + ' · 需 Lv' + sdLv + '）';
     }
 
