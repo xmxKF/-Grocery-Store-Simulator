@@ -119,18 +119,18 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 
 | 生成器 | 用途 | 分辨率 | 贴片 | repeat |
 |---|---|---|---|---|
-| `floorWood()` | 地板 16×12 | 512² | 2m | (8, 6) |
-| `yardConcrete()` | 卸货区 | 256² | 1.75m | (2, 2.9) |
-| `wallWainscot()` | 四段墙（含腔裙板+踢脚线，画在纹理下部） | 256×512 | 2m 横向 | (L/2, 1) |
-| `ceilingPanel()` | 天花板矿棉格 | 256² | 1.2m | (13.3, 10) |
-| `shelfMetal()` | 货架框/背板/层板拉丝 | 256² | 0.5m | (4, 4) |
+| `floorWood()` | 地板 32×20 | 512² | 2m | (16, 10) |
+| `yardConcrete()` | 卸货区（东 4×8 / 西 4×7） | 256² | 1.75m | (2, 4) / (2, 3.5) |
+| `wallWainscot()` | 13 段墙（含腔裙板+踢脚线，画在纹理下部） | 256×512 | 2m 横向 | (L/2, 1) |
+| `ceilingPanel()` | 天花板矿棉格 32×20 | 256² | 1.2m | (26.7, 16.7) |
+| `shelfMetal()` | 货架框/背板/层板拉丝；另供卷帘门 (2,3) 与仓库存储位标记 (1,1) | 256² | 0.5m | (4, 4) |
 | `fridgeSteel()` | 冷藏柜框 | 256² | 0.5m | (4, 4) |
 | `counterLaminate()` | 收银台柜体 | 256² | 1m | (1.2, 2) |
 | `beltRubber()` | 传送带橡胶（近灰度，靠材质色相乘） | 256² | 0.3m | (3, 5) |
 | `cardboard()` | 纸箱瓦楞（近灰度） | 256² | 0.45m | (1, 1) |
 | `labelBand(shape, accent)` | 商品标签环带，按 (shape,accent) 缓存 | 64² | — | (1, 1) |
 
-表中 repeat 为该用途的典型值，由调用方传入生成器（如北墙 16.2m 与东墙段 5m 各传各的 `L/2`）。全部 POT + `RepeatWrapping` + 默认 mipmap（WebGL1 合法）。anisotropy 只给 `floorWood`/`yardConcrete`：`Math.min(4, renderer ? renderer.capabilities.getMaxAnisotropy() : 1)`——必须判 `renderer` null（无头环境为 null）。UV 不改：Box 大面 U 沿长度、V 沿高度，`repeat.set(n,1)` 使腔裙板贴底、横向平铺；Plane 同理。生成总耗时预算 < 20ms（一次性，启动时）。
+表中 repeat 为**实际生产调用值**（C-T8 逐调用点实读；`floorWood(8,6)` 只出现在自测里，不是生产值）。墙体一律由 `wallAlongX/Z` 按各自段长传 `L/2`（如南北外墙段长 32.4m → 16.2，东墙北段 4.0m → 2.0）。全部 POT + `RepeatWrapping` + 默认 mipmap（WebGL1 合法）。anisotropy 只给 `floorWood`/`yardConcrete`：`Math.min(4, renderer ? renderer.capabilities.getMaxAnisotropy() : 1)`——必须判 `renderer` null（无头环境为 null）。UV 不改：Box 大面 U 沿长度、V 沿高度，`repeat.set(n,1)` 使腔裙板贴底、横向平铺；Plane 同理。生成总耗时预算 < 20ms（一次性，启动时）。
 
 红线：
 - 【红线】传送带材质 .color 恒为 #4E5866（视觉契约：收银台台面在全店配色里的唯一识别色，玩家一眼认得出放货位置；C-T3 起 checkout 已改经 `registers[i].beltMesh` 定位，色值不再兼任功能锚点）；橡胶纹理做成近灰度靠材质色相乘。
@@ -142,7 +142,7 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 - `AmbientLight(0xFFFFFF, 0.12)`——保底不死黑
 - `DirectionalLight(0xFFF6E5, 0.85)` @ `(8,14,6)`，`castShadow = true`（唯一投影灯）
 
-阴影参数：世界 AABB x∈[-8.2,11.9]、z∈[-6.2,6.2]、y∈[0,3] → shadow camera：ortho ±13、near 1、far 40；`mapSize 2048²`（≈1.27cm/texel，26m/2048）；`bias -0.0004`、`normalBias 0.03`（flatShading Box 用 normalBias 防痤疮不产生 peter-panning）；`renderer.shadowMap.type = PCFSoftShadowMap`。
+阴影参数（**C-T8 实测回写**，值取自 `main.js buildScene()` 实读 + 全开态 collider 实测）：世界 AABB x∈[-20.4, 20.4]、z∈[-10.2, 10.7]（全开态 40 个 collider 的并集：32×20 主壳 + 东西两院围栏），y∈[0, `WALL_H` 3.6] → shadow camera：`ortho ±26`、`near 1`、`far 60`；`mapSize 4096²`（≈1.27cm/texel，52m/4096——与 B 期 26m/2048 同精度）；`bias -0.0004`、`normalBias 0.03`（flatShading Box 用 normalBias 防痤疮不产生 peter-panning）；`renderer.shadowMap.type = PCFSoftShadowMap`。断言 `shadow.frustumCovers` 逐 collider 取 8 角点验证全部落在该视锥内（高度只采样到 y=3，未覆盖 3.0-3.6 的墙顶段）。
 
 cast / receive 矩阵：
 
@@ -159,7 +159,22 @@ cast / receive 矩阵：
 
 【红线】墙与天花板 castShadow 恒为 false（无窗室内，壳体投影 = 全店漆黑，headless 自测无法发现，只能靠断言 shadow.shellNoCast 防守）。
 
-阴影 pass ≈139 个深度 draw（按 §5.8 新分项：racks 50 + 顾客 14×4=56 + 收银员 4 + 纸箱 24 + 房间设施 5，货架玻璃/价签/命中盒/InstancedMesh 商品/顾客发型臂鞋/箱标签均不投影），总提交 ≈646（507 主渲染 + 139 阴影深度），中配预算内。lowfx：`shadowMap.enabled=false` 一个布尔。
+阴影 pass **241** 个深度 draw（**C-T8 大卖场满配实测**，与 §5.8 的 710 同一场景同一次运行；口径 = 全场 `castShadow===true` 且自身与全部祖先 `visible!==false` 的 Mesh）：
+
+| cast 分项 | 深度 draw | 算式 |
+|---|---:|---|
+| 货架层板 | 40 | 20 组 × 2 层 |
+| 货架背板 | 20 | 20 组 × 1 |
+| 货架侧板 | 40 | 20 组 × 2（右侧板走 `sideGeo.clone()`，r128 下类型退化为 `BufferGeometry`） |
+| 纸箱箱体 | 40 | 40 只箱 × 1（`0.45³`；类目色标签面片不投影） |
+| 顾客 + 收银员 | 92 | 23 人 × 4（2 腿 + 躯干 + 头；发型/臂/鞋不 cast） |
+| 收银台 + 传送带 | 6 | 3 台 × 2 |
+| 仓储电脑机身/屏幕 + 垃圾桶身 | 3 | 桶盖不 cast |
+| **合计** | **241** | |
+
+不投影者：冷藏柜玻璃、价签、命中盒（`visible=false`）、InstancedMesh 商品、顾客发型/臂/鞋、箱标签面片、存储位地面标记、壳体（红线）、卷帘门（全开后 `visible=false`）。
+
+总提交 **951** = 710 主渲染 + 241 阴影深度。lowfx：`shadowMap.enabled=false` 一个布尔，阴影 pass 归零。
 
 ### 5.6 商品表现
 八套共享几何（单件 ≤112 三角（jug 上限）；XZ 包络 ≤0.165m（断言值；tray 0.175 躺放例外））：
@@ -215,23 +230,53 @@ InstancedMesh 商品实例池：按商品 pid 分组，每个上架中的商品�
 
 - 【禁令】实例颜色一律走 per-pid 材质，不使用 instanceColor/setColorAt——不是能力缺失（本构建支持），而是架构必然：每个商品的 labelBand 贴图不同，材质本就必须 per-pid，instanceColor 只能合并同 (shape,accent) 组、收益不抵复杂度。
 - 【禁令】InstancedMesh 必须 frustumCulled = false（r128 无 computeBoundingSphere，默认视锥剔除按原点包围球计算，会导致整组商品消失）。
+- 【闸门场景纪律】`perf.drawCallCeiling` 必须用**轮转灌店**（外层轮次、内层遍历 24 个商品，每轮每个商品各上一格），不得顺序灌店。理由：顺序灌店会把同一商品灌满一格才换下一个，全店 120 格只需 2-3 个 pid 就填满，实例池只建 2 组，测出来的 draw call 比真实游玩低 20 余个——池上限 ≤24 这条约束根本没被求值。轮转灌店才能逼出 24 组池全开的最坏形态（C-T7 实测：轮转 24 组 / 顺序 2 组）。
 
-draw call 账（大卖场扩张 Lv10 满配，绝对最坏负载，spec `2026-08-02-大卖场扩张-design.md` §8）：价签 120 / 货架框 104 / 实例池 ≤24 / 壳体 21 / 卷帘门 4 / 收银台 6 / 设施 3 / 存储架 10 / 仓库箱 48 / 卸货箱 24 / 站桩 27 / 顾客 180 / 手持（上限 6/人）120 → 合计 **≈691**。**总闸门 550→760**。
+draw call 账（大卖场扩张 Lv10 满配，绝对最坏负载，spec `2026-08-02-大卖场扩张-design.md` §8）。**下表为 C-T8 实测值**（`perf.drawCallCeiling` 断言现场逐类普查，非估算）：
 
+| 分项 | draw call | 算式 / 说明 |
+|---|---:|---|
+| 价签 | 120 | 120 格 × 1；每格独立 Material（准星高亮载体） |
+| 命中盒 | **0** | 120 个 `visible=false`，渲染器整体跳过（不占 draw call） |
+| 货架框 | 104 | 20 组 ×（1 背板 + 2 侧板 + 2 层板）= 100，+ 4 台冷藏柜玻璃面 |
+| 实例池 | 24 | 上架中的商品每 pid 一个 InstancedMesh；满配恰好触顶 ≤24 |
+| 壳体 | 21 | `userData.shell` 打标者（地板/天花板/12 墙/门柱/院地面…） |
+| 卷帘门 | **0** | 3 扇（非 4）；全开后 `visible=false`，未开时各 1 |
+| 收银台 | 6 | 3 台 ×（柜体 + 传送带） |
+| 设施 | **4** | 仓储电脑机身 + 屏幕 + 垃圾桶身 + 桶盖 |
+| 存储位标记 | **24** | 24 个 `0.6×0.02×0.6` 地面标记，各 1 draw（材质必须逐个独立） |
+| 仓库箱 | 48 | 24 箱 ×（箱体 + 类目色标签面片） |
+| 卸货箱 | 24 | 12 箱 × 2 |
+| 收银员站桩 | 27 | 3 人 × 9 部件 |
+| 顾客 | 180 | 20 人 × 9 部件 |
+| 顾客手持（上限 6/人） | 120 | 20 × 6 |
+| **理论满配合计** | **702** | |
+| 自测现场实测 | **710** | 多出的 8 = 前序断言残留在地面的 4 只散落纸箱 × 2 mesh |
+
+**总闸门 550→760**，余量 50。
+
+- **【订正】「存储架 10」是 C-T4 前按「两条金属横梁」结构做的预算，与实现不符。** T4 按 YAGNI 只建了 24 个地面位标记、未建横梁，实际行项为 **24**。横梁属未实现的美术意图，若 D 期补建，须按 +draw call 重估该行项与 760 闸门。
+- 「卷帘门 4」「设施 3」同为 T0 预写估值，实测分别为 3 与 4。
 - `addHandCube` 视觉上限 6/人（逻辑 `c.items` 完整，仅渲染截断）。
 - 价签图集**本期不做**（预案留档：每 rack 6 格图集 + 单一全局高亮框，120→21；帧率实测不达标才启用）。
-- TAG_TEX 治漏：**C-T7 起**缓存键改为 `pid|state`（价格不入键，改价 dispose 重建），条目上限 72（24×3 态）。
-- 阴影深度 pass ≈240，总提交 ≈931，中配预算内（§5.5 末段 ≈139/≈646 为 B 期实测口径，T8 随视锥扩容实测回写）。
+- TAG_TEX 治漏：**C-T7 起**缓存键改为 `pid|state`（价格不入键，改价 dispose 重建），理论上界 **49**（`empty|-` 1 + 24 pid × `stocked`/`out` 各一）——断言 `world.tagTexNoLeak` 已按此收紧，实测 5。
+- 阴影深度 pass **241**、总提交 **951**（分项见 §5.5 末段，同一场景同一次运行实测）。
 
-【T0 预写目标值，T8 实测回写】以上为大卖场满配的理论上限，实测闸门 760 按 T7 灌店自测回写确认；方法论沿用 B-T7：闸门以自测脚本实际运行到该断言时的场景状态为准（可能含前序测试残留），比理论刚启动负载更高更保守。
+**满配场景的真实构成**（`perf.drawCallCeiling` detail 自带，回归时直接看）：货架 120/120 格有货、收银 3 台、仓库 24/24 箱、卸货区 12/12 箱、测试顾客 20 名（每客塞 12 件逻辑手持、实渲染 6）。分阶段差分：`preZones 135 → 建 B/C/W 317 → 站桩 344 → 灌店 366 → 仓库补箱 410 → 卸货补箱 410（院已满，spawnBox 全 null）→ 20 顾客 710`。
+
+方法论沿用 B-T7：闸门以自测脚本实际运行到该断言时的场景状态为准（含前序测试残留），比理论刚启动负载更高更保守。
+
+**未纳入闸门场景的负载**（下次加装饰前须先补进来）：传送带上的商品 mesh、玩家举起的纸箱。余量 50 比看上去薄。
 
 ### 5.9 lowfx
 `localStorage['gss-lowfx']='1'` → `G.tex.on=false`（生成器全返回 null，材质纯色）+ `renderer.shadowMap.enabled=false` + 跳过 castShadow 赋值。逻辑对象、价签状态、命中盒不变——玩法与存档不分叉。切换需刷新页面。
 
 ### 5.10 比例与雾
-相机高 1.65m，`fov 70`，`near 0.1`，`far 200`。货架高 1.8m、宽 2.0m、深 0.8m；通道宽 2.2m；店面 **32m × 20m**（`WALL_H` 3.0→**3.6**）。`scene.fog = new THREE.Fog(0xAECBE0, 45, 140)`，柔化远处墙体。
+（**C-T8 实测回写**，逐项与 `main.js` / `world.js` 常量对齐）相机高 1.65m，`fov 70`，`near 0.1`，`far 200`。货架 `SHELF_H` 1.8m × `SHELF_W` 2.0m × `SHELF_D` 0.8m；**主购物通道净宽 2.4m**（货架行中心 z=±1.6、进深 0.8 → 架面在 z=±1.2；C 区 z=-8.6/-5.4 行同为 2.4m）；店面 **32m × 20m**（`ROOM_HALF_X` 16 / `ROOM_HALF_Z` 10，`WALL_H` 3.0→**3.6**）。`scene.fog = new THREE.Fog(0xAECBE0, 45, 140)`，柔化远处墙体。
 
-【T0 预写目标值，T8 实测回写】阴影视锥随店面放大同步扩容：ortho ±13→**±26**、far 40→**60**、`mapSize` 2048²→**4096²**（保持 ~1.27cm/texel 精度不降）；正式落地仍以 §5.5 灯光与阴影一节为准，T1 施工时与 §5.5 一并回写核实值。
+- **【订正】原记「通道宽 2.2m」是 B 期小店值，大卖场布局实为 2.4m。**
+
+阴影视锥随店面放大同步扩容，**已落地**（C-T1 实施、C-T8 实读核实）：ortho ±13→**±26**、far 40→**60**、`mapSize` 2048²→**4096²**（1.27cm/texel 精度不降）。参数正本以 §5.5 灯光与阴影一节为准。
 
 ## 6. 交互反馈规则
 - **准星命中**（≤3m 的 interactable）：目标 mesh 的 `material.emissive` 设为 `#FFD666`、`emissiveIntensity 0.35`；移开立即还原（缓存原值，禁止克隆材质导致泄漏）。同时 `#crosshair` 变 `--hl`、`#prompt` 显示文案。

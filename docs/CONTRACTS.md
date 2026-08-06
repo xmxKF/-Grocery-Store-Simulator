@@ -45,7 +45,8 @@ G.bus.on(evt, fn); G.bus.off(evt, fn); G.bus.emit(evt, payload /*单个对象*/)
 ### G.data（data.js）
 - `G.data.PRODUCTS`: `[{id, name, cat, cost, market, boxSize, slotCap, unlockLevel, color, shape, scale?, accent?}]`（24 项；shape ∈ bottle|can|carton|bag|tub|jug|tray|produce；scale 省略视为 [1,1,1]；accent 省略时回退 color，当前 24 商品均显式给值）
 - `G.data.CONFIG`: `{startMoney, dayLengthSec, rentPerDay, deliverySec, spawnIntervalBase, patienceSec, ...}`（抄 GDD）
-- `G.data.LEVELS`: `[{level, xpNeeded, unlock:string, shelfGroups?, expansion?:boolean, maxBoxesPerOrder?, cashierAvailable?:boolean}]`（可选字段供 world.js/shop.js 判定扩建/收银员解锁）
+- `G.data.LEVELS`: `[{level, xpNeeded, unlock:string, warehouseAvailable?:true, zoneB?:true, zoneC?:true, maxBoxesPerOrder?, cashierAvailable?:true}]`（C-T5 换表；旧字段 `shelfGroups`/`expansion` 已删）
+  - 只有 `maxBoxesPerOrder` 有真实消费方（shop.js 订货上限）。`warehouseAvailable`/`zoneB`/`zoneC`/`cashierAvailable` 目前**零消费方**——等级门槛的真相在 `CONFIG.zoneLevels` 与 `shop.hireCashier` 的硬编码 `level < 10`，两处现值一致但不同源，改一处不会自动同步另一处。
 - `G.data.productById(id)`
 
 ### G.state（state.js）
@@ -82,7 +83,7 @@ G.tex._cache   // {canvases, textures}，双层缓存内部表，仅供自测
 ### G.world（world.js）
 ```js
 G.world.init(scene)               // 建店：地板/墙/门/货架/收银台/仓储电脑/卸货区/垃圾桶
-G.world.slots                     // [{id, pos:THREE.Vector3, productId|null, count}]
+G.world.slots                     // [{id, pos:THREE.Vector3, productId|null, count, fridge:bool, marker:Group, tagMesh, hitMesh, itemGroup, aisleSpot:Vector3, faceZ:±1}]（前四项是跨模块契约面，其余为 world.js 内部渲染字段，只读）
 G.world.findEmptyOrMatchingSlot(pid)      // -> slot|null（上架用）
 G.world.findSlotWithProduct(pid)          // -> slot|null（顾客拿货用）
 G.world.addItem(slot, pid, fromPos /*可选 THREE.Vector3，飞行动画起点；省略则无飞行*/) /*->bool*/  G.world.removeItem(slot) /*->bool；count 归零保留 productId 以显示缺货*/  // 同步更新货架上的可见商品堆
@@ -98,12 +99,19 @@ G.world.colliders                 // [{minX,maxX,minZ,maxZ}] 供 player/顾客�
 G.world.nav = { entry, exit, aisleSpots:[Vector3], registers /*= G.world.registers 同引用*/ }   // 旧 queueSpots/registerFront 已于 T3 删除
 G.world.serializeShelves() / G.world.restoreShelves(data)
 G.world.registers   // [{index, mesh, beltMesh, front:Vector3, queueSpots:[Vector3×4], zone}]（按区域解锁惰性建造）
-G.world.storageSlots // [{id, pos, marker, box:null|箱}]（仓库购买后建造，24 位）
-G.world.storeBox(slot, box) /*->bool*/  G.world.takeBox(slot) /*->box|null*/
+G.world.storageSlots // [{id:'st0'..'st23', pos:Vector3, marker:Mesh, box:null|箱}]（C-T4；仓库购买后建造，24 位 = 6 列 × 4 排地面标记）
+G.world.storeBox(slot, box) /*->bool*/  G.world.takeBox(slot) /*->box|null*/   // C-T4
 // takeBox 只解绑不搬箱（mesh 留在原位），调用方负责重新定位；storeBox 起手先解绑该箱的旧位，杜绝「一箱两位」
-G.world.serializeStorage() /*->[{id,pid,left}]*/  G.world.restoreStorage(data)   // restore 靠 slot.id 匹配，必须在 buildZone('W') 之后调用
-G.world.buildZone(z /*'B'|'C'|'W'*/)   // 幂等；自置位 zones[z]+开门+除collider+启用节点+建造该区设施
+G.world.releaseStorageOf(box)   // C-T4；按 box 反查并清空所占存储位（玩家直接搬起存储位上的箱时由 player 调用）
+G.world.serializeStorage() /*->[{id,pid,left}]*/  G.world.restoreStorage(data)   // C-T4；restore 靠 slot.id 匹配，必须在 buildZone('W') 之后调用
+G.world.buildZone(z /*'B'|'C'|'W'*/)   // C-T1；幂等；自置位 zones[z]+开门+除collider+启用节点+建造该区设施
+G.world.zoneOf(x, z) /*->'core'|'A'|'B'|'C'|'W'|null*/   // C-T2；点落在哪个区域矩形（core 优先），findPath 目的地闸消费
+G.world.isOnYard(mesh) /*->bool*/   // C-T4；箱 mesh 是否停在当前生效卸货区的 12 个位上（0.3m 判据）
 ```
+**新 API 落地时点**（T0 立契约、下游实施）：`buildZone` = C-T1；`nav.findPath` / `zoneOf` = C-T2；
+`registers[]` 逐台化 + `setCashierVisible(index, visible)` = C-T3；`storageSlots` / `storeBox` / `takeBox` /
+`releaseStorageOf` / `serializeStorage` / `restoreStorage` / `isOnYard` = C-T4；`shop.yardHasRoomFor` /
+`world._tagStats` / `player._test.prompt` = C-T7。
 店内寻路：`G.world.nav.findPath(from, to) -> [Vector3]`（走廊节点图 + Dijkstra；未解锁区域节点禁用，
 不可达返回 []）。顾客经 findPath 折线移动，互不碰撞可穿过；玩家与员工不寻路。
 
@@ -153,7 +161,10 @@ G.checkout.exitRegister()
 G.checkout.update(dt)
 G.checkout.stance   // null | {pos: THREE.Vector3, yaw: Number, pitch: Number}（只读，供自测断言）
 G.checkout.activeRegisterId   // 只读；玩家当前所在台 index，未进入时 null
-G.checkout._test    // 自测钩子：tx(i=0)/scanAll(i=0)/settle(i=0)/payCard(i=0)/frame(i=0)/registers()，i 缺省 0，仅 ?selftest 使用
+G.checkout._test    // 自测钩子：ease/registers()/frame(i)/tx(i)/scanAll(i)/settle(i)/payCard(i)，仅 ?selftest 使用
+// 【二义警告】这些钩子的 i 是 ensureRegisters() 返回数组的**位序**，不是 register.index。
+// 现状二者恒等（R1 开局建、R2 随 B、R3 随 C，push 顺序即 index 顺序）；但玩家若先买 C 后买 B，
+// 数组位序会变成 [0, 2, 1] 而 index 仍是 0/1/2 —— 届时 _test.tx(1) 取到的是 R3。断言若需按台号定位，用 index 自行查找。
 ```
 - `joinQueue(c)`：在已建收银台中选 `queue.length` 最小者入队（并列取低 index），全部满则返回 false。
 - 队首顾客把商品放上传送带（小 mesh 排开）；玩家逐件点击扫码（总价累计显示于 #pos）。
@@ -164,7 +175,7 @@ G.checkout._test    // 自测钩子：tx(i=0)/scanAll(i=0)/settle(i=0)/payCard(i
 ```js
 G.ui.init()
 G.ui.showScreen(name /*'menu'|'computer'|'summary'|null*/)   // emit('screen')
-G.ui.prompt(text|null); G.ui.toast(text)
+G.ui.prompt(text|null); G.ui.toast(text, kind /*'ok'|'warn'|'danger'，省略为 'ok'；同时最多堆 3 条*/)
 ```
 - 监听 bus 刷新 HUD；电脑界面三个标签：订货 / 定价 / 许可证（数据全来自 G.data/G.state/G.shop API）。
 - 样式全部按 `DESIGN.md`。
@@ -173,7 +184,17 @@ G.ui.prompt(text|null); G.ui.toast(text)
 - 启动：renderer/scene/light、`world.init`、各模块 init、菜单（新游戏/继续）。
 - 主循环：rAF，dt≤0.1s；推进 clock；打烊逻辑：时间到停止生成顾客，场内顾客走完 → `'dayEnd'` + 结算界面（扣房租）→ 下一天。
 - **自测模式**：URL 带 `?selftest` → 跳过菜单与指针锁，加速模拟脚本化场景（订货→即时送达→上架→生成顾客→强制走完→刷卡结账→日结算），把断言结果 JSON 写入 `#selftest` 并设 `document.title = 'SELFTEST:PASS'|'SELFTEST:FAIL'`；`window.onerror` 也写入其中。
-  - 验收命令：`msedge --headless=new --dump-dom --virtual-time-budget=20000 "file:///C:/Users/quito/超市模拟器/index.html?selftest=1"`
+  - 验收命令（正常态）：
+    ```
+    msedge --headless=new --disable-gpu --no-sandbox --allow-file-access-from-files \
+           --user-data-dir=<每次跑前 rm -rf 的全新目录> --virtual-time-budget=120000 \
+           --dump-dom "file:///C:/Users/quito/超市模拟器/index.html?selftest=1"
+    ```
+  - **三个已实证的环境坑**（C 期逐一踩出，勿省略上面任何一个开关）：
+    1. `--user-data-dir` 会把 `gss-lowfx` 留在 profile 里。两态必须用**各自独立**的 profile 目录并在**每次跑前 `rm -rf`**，否则正常态会静默跑成 lowfx（表现为断言总数变少、`tex.*` 整块消失）。
+    2. **`&lowfx=1` URL 参数不存在。** lowfx 态只能用跳板页：一个临时 html 先 `localStorage.setItem('gss-lowfx','1')` 再 `location.replace('index.html?selftest=1')`，且必须带 `--allow-file-access-from-files`。
+    3. 在受沙箱约束的 shell 里调用 headless Edge 会静默产出 0 字节 DOM（无报错）。必须在不受沙箱约束的方式下调用。
+  - 当前基线：正常态 **124/124**、lowfx **119/119**（C-T8 实测）。
 
 ## 共享工具（state.js 提供，全模块可用）
 ```js
@@ -214,7 +235,7 @@ G.clamp(v, a, b)
 - **顾客手持渲染上限 6 件**（C-T7）：`addHandCube` 超过 6 件不再建 mesh，`popItem` 守不变式 `hands.children.length === min(items.length, 6)`。逻辑 `items` 不受影响（清单最多 6 条 ×2 件 = 12 件），结账金额与库存扣减照常。
 - lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js、world.js 与 customers.js 通过 G.tex.on 判断。
 - `belt.userData.belt`：world.js 打标（另带 `userData.registerId`）。C-T3 起 checkout 经 `G.world.registers[i].beltMesh` 直取自家台面，`userData.belt` 标记与 #4E5866 色值均不再承担 checkout 定位职责（色值红线仍在 DESIGN §5.4，属视觉契约）。
-- `userData.shell`：world.js 打标（10 处壳体）、main.js 自测 shellNoCast 断言消费——壳体绝不 castShadow 的硬标记。
+- `userData.shell`：world.js 打标（`addShell()` 7 个调用点，满配实测 **21** 个壳体 mesh：地板 1 + 天花板 1 + 外墙 6 段 + 内隔墙 7 段 + 门框柱 4 + 东西院混凝土地面 2）、main.js 自测 shellNoCast 断言消费——壳体绝不 castShadow 的硬标记。
 
 ## 编码纪律
 - 不引入契约之外的跨模块调用；需要新接口时**停下上报**，不擅自加。
