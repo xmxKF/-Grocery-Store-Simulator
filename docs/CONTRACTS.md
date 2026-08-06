@@ -17,7 +17,7 @@
 | `css/style.css` | ui |
 | `js/data.js`、`js/state.js`、`js/shop.js` | economy |
 | `js/textures.js`、`js/world.js` | world |
-| `js/physics.js` | physics（D 期新增） |
+| `js/physics.js`（D 期新增） | physics |
 | `libs/cannon.min.js`（vendor 下载） | scaffold |
 | `js/player.js` | player |
 | `js/customers.js`、`js/checkout.js` | customers |
@@ -27,9 +27,11 @@
 `index.html` script 顺序（固定）：
 `libs/three.min.js` → `libs/cannon.min.js` → `js/data.js` → `js/state.js` → `js/textures.js` → `js/physics.js` → `js/world.js` → `js/player.js` → `js/shop.js` → `js/customers.js` → `js/checkout.js` → `js/ui.js` → `js/main.js`
 **`js/physics.js` 必须在 `js/world.js` 之前**（D 期）：`world.init()` 会走到 `rebuildGraph → syncStatics`，若 `G.physics` 未定义，`syncStatics()` 无从调用。
+（D-T1 前 `index.html` 尚未接入 cannon 与 physics，此顺序自 D-T1 起生效，见 spec §2.5——在此之前 `index.html` 实况仍是不含二者的旧顺序，与本行不同步是预期状态，不是契约与实况脱节。）
 
 `index.html` 固定 DOM id（ui/checkout 只能用这些容器）：
 `#app`(canvas 容器) `#hud` `#hud-money` `#hud-day` `#hud-clock` `#hud-level` `#crosshair` `#charge` `#prompt` `#toast` `#screen-menu` `#screen-computer` `#screen-summary` `#pos` `#selftest`(隐藏 pre)
+（`#charge` 自 D-T3 起存在于 `index.html`；D-T0~T2 阶段该 id 尚未接入，属预写契约。）
 
 ## 全局命名空间 `G`
 
