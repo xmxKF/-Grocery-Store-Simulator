@@ -29,7 +29,8 @@
     ['Esc', '关闭当前界面 / 退出收银台 / 释放指针锁定']
   ];
 
-  var SAVE_KEY = 'gss-save-v1'; // CONTRACTS.md 固定存档 key，仅用于「继续」按钮可用性判断
+  // CONTRACTS.md 固定存档 key，仅用于「继续」按钮可用性判断；v1 仍算有档（G.load 会迁移）
+  var SAVE_KEYS = ['gss-save-v2', 'gss-save-v1'];
 
   /* ---------- 模块状态 ---------- */
   var screens = {};      // name -> #screen-* 元素
@@ -59,7 +60,9 @@
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
   function hasSave() {
-    try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
+    try {
+      return !!(localStorage.getItem(SAVE_KEYS[0]) || localStorage.getItem(SAVE_KEYS[1]));
+    } catch (e) { return false; }
   }
 
   function getMaxBoxesPerOrder() {

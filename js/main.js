@@ -179,6 +179,10 @@
     refreshHud();
     syncCashiers();
     G.ui.toast('备货阶段：Tab 开电脑订货，按 O 开门营业');
+    if (G.state._migrated) {
+      G.ui.toast('存档已升级：店铺按新布局重建，原货架库存 ' + G.fmt(G.state._migrated.refund) + ' 已按进价折现入余额', 'warn');
+      G.state._migrated = null;
+    }
   }
 
   function onNewGame() {
@@ -250,6 +254,19 @@
     return n * G.data.CONFIG.cashierWage;
   }
 
+  /* 日固定支出：基础房租 + 每个已开区域的租金 + 货架/冷藏柜水电 + 收银员工资（design §6） */
+  function computeRent() {
+    var cfg = G.data.CONFIG;
+    var racks = countRacks();
+    var rentZ = cfg.rentPerZone || {};
+    var zones = G.state.zones || {};
+    return round2(cfg.rentPerDay
+      + (zones.W ? rentZ.W : 0) + (zones.B ? rentZ.B : 0) + (zones.C ? rentZ.C : 0)
+      + racks.shelfGroups * cfg.utilPerShelf
+      + racks.fridges * cfg.utilPerFridge
+      + staffedWage());
+  }
+
   function endDay() {
     if (phase !== 'closing') return;
     phase = 'summary';
@@ -257,15 +274,7 @@
     if (G.checkout.exitRegister) G.checkout.exitRegister();
 
     var cfg = G.data.CONFIG;
-    var racks = countRacks();
-    var rentZ = cfg.rentPerZone || {};
-    var zones = G.state.zones || {};
-    var rent = cfg.rentPerDay                                      // 基础房租 + 每个已开区域的租金
-      + (zones.W ? rentZ.W : 0) + (zones.B ? rentZ.B : 0) + (zones.C ? rentZ.C : 0)
-      + racks.shelfGroups * cfg.utilPerShelf
-      + racks.fridges * cfg.utilPerFridge
-      + staffedWage();
-    rent = round2(rent);
+    var rent = computeRent();
 
     var ds = G.state.dayStats;
     var summary = {
@@ -350,6 +359,28 @@
       }
       return done ? done() : true;
     }
+    /* 自测会 resetSave / nextDay 存盘 / 写 v1 迁移样本——而玩家的真实存档就在同一个
+       localStorage（同机 file:// 直接开 index.html 游玩，自测页与游戏页同域同源）。
+       起手快照两个存档键，收尾（含异常路径，见 finally）无条件还原：原值为 null 则删键。 */
+    var saveBackup = null;
+    try {
+      saveBackup = { 'gss-save-v1': localStorage.getItem('gss-save-v1'), 'gss-save-v2': localStorage.getItem('gss-save-v2') };
+    } catch (e) {
+      saveBackup = null;
+    }
+    function restoreSaveKeys() {
+      if (!saveBackup) return;
+      try {
+        for (var k in saveBackup) {
+          if (!saveBackup.hasOwnProperty(k)) continue;
+          if (saveBackup[k] == null) localStorage.removeItem(k);
+          else localStorage.setItem(k, saveBackup[k]);
+        }
+      } catch (e) {
+        // 还原失败（存储被禁）不影响自测判定
+      }
+    }
+
     function currentTx() { return G.checkout._test.tx(0); }
     function serveTx() {
       var regs = G.checkout._test.registers();
@@ -486,6 +517,20 @@
       ck('world.storageRoundtrip', Array.isArray(stData) && stData.length === 1 &&
         stData[0].id === stSlot.id && stData[0].pid === 'f_noodle', JSON.stringify(stData));
       G.world.takeBox(stSlot);   // 清场；stBox 留在场上由后续断言消耗或无害
+      /* C-T6：真往返——上一条只验了 serialize，restoreStorage 与 left 字段此前零覆盖。
+         顺带钉死「一箱两位」：同一箱换位后旧位必须释放，否则 serializeStorage 出重复条目 */
+      G.world.storeBox(stSlot, stBox);
+      stBox.itemsLeft = 7;
+      var stData2 = G.world.serializeStorage();
+      G.world.takeBox(stSlot);
+      G.world.restoreStorage(stData2);
+      var rBox = stSlot.box;
+      var rMoved = !!rBox && G.world.storeBox(G.world.storageSlots[3], rBox) === true;
+      var rNoDup = G.world.serializeStorage().length === 1;
+      G.world.takeBox(G.world.storageSlots[3]);
+      ck('world.storageRestore', !!rBox && rBox !== stBox && rBox.productId === 'f_noodle' &&
+        rBox.itemsLeft === 7 && rMoved && rNoDup,
+        JSON.stringify({ pid: rBox && rBox.productId, left: rBox && rBox.itemsLeft, moved: rMoved, noDup: rNoDup }));
       // 卸货区满 → spawnBox 返回 null
       var spawned = 0, lastSpawn = true;
       for (var yb = 0; yb < 14 && lastSpawn; yb++) {
@@ -513,6 +558,27 @@
       var afterStore = G.shop.orderBoxes([{ pid: 'f_noodle', qty: 1 }]);
       ck('shop.orderRejectWhenFull', fullReject === false && ybStored === true && afterStore === true,
         '满院拒单 ' + fullReject + '，入仓一箱后放行 ' + afterStore);
+
+      /* C-T6：卸货区满时送达必须延后而非丢箱（spec §8 钉死债务 #2）。
+         承接上一条现场：院内 11 箱 + 上一条订的 1 箱在途——先把院填满 12 位。 */
+      function yardBoxCount() {
+        return G.world.interactables.filter(function (it) {
+          return it.type === 'box' && G.world.isOnYard(it.mesh);
+        }).length;
+      }
+      var deliverN = 0;
+      function onDeliveryEvt() { deliverN++; }
+      G.bus.on('delivery', onDeliveryEvt);
+      var padBox = G.world.spawnBox('d_water');
+      var yardFullN = yardBoxCount();
+      G.shop.update(G.data.CONFIG.deliverySec + 2);   // 到点但无空位：条目必须留在队列里
+      var deferOk = !!padBox && yardBoxCount() === yardFullN && deliverN === 0;
+      var padStored = G.world.storeBox(G.world.storageSlots[2], padBox);   // 腾一位
+      G.shop.update(3);
+      var resumeOk = padStored === true && yardBoxCount() === yardFullN && deliverN === 1;
+      G.bus.off('delivery', onDeliveryEvt);
+      ck('shop.yardFullDefer', deferOk && resumeOk,
+        '满院时挂起 ' + deferOk + '（院内 ' + yardFullN + ' 箱），腾位后送达 ' + resumeOk + '（delivery 事件 ' + deliverN + ' 次）');
 
       /* --- 价签与命中盒（Task 3）--- */
       var tagOk = true, hitOk = true, tagDetail = '';
@@ -973,6 +1039,15 @@
       ck('summary.rentCharged', Math.abs(rentCharged - expRent) < 0.01, '实扣 ' + round2(rentCharged));
       ck('summary.sane', s.revenue >= 0 && s.cogs >= 0 && s.customers >= 1 && s.itemsSold >= 1, JSON.stringify(s));
 
+      /* C-T6：多区房租实算（spec §9）——B/C 的 30/40 此前只作为常量被读到，从未验过叠加路径 */
+      var zB0 = G.state.zones.B, zC0 = G.state.zones.C;
+      G.state.zones.B = true; G.state.zones.C = true;
+      var scaledRent = computeRent();
+      G.state.zones.B = zB0; G.state.zones.C = zC0;
+      var expScaled = 40 + 20 + 30 + 40 + 4 * 2 + staffedWage();   // 基础 + W/B/C + 4 组普通货架水电 + 工资
+      ck('summary.rentScaled', Math.abs(scaledRent - expScaled) < 0.01 && G.state.zones.B === zB0,
+        '三区全开房租 ' + scaledRent + ' / 预期 ' + expScaled + '（zones 已还原 B=' + G.state.zones.B + '）');
+
       /* --- 次日 --- */
       G.bus.emit('nextDay', {});
       ck('day.next', G.state.day === 2 && G.state.clock === 0 && phase === 'prep' &&
@@ -994,6 +1069,30 @@
         JSON.stringify({ money: round2(G.state.money), day: G.state.day, xp: G.state.xp, level: G.state.level }));
       ck('save.shelves', G.world.getStockCount('f_noodle') === snap.stock,
         '方便面 ' + G.world.getStockCount('f_noodle') + ' / 预期 ' + snap.stock);
+
+      /* --- C-T6 存档 v2 --- */
+      ck('save.v2Key', !!localStorage.getItem('gss-save-v2'), 'nextDay 后应存在 v2 键');
+      var v2raw = JSON.parse(localStorage.getItem('gss-save-v2') || '{}');
+      ck('save.v2Shape', v2raw.v === 2 && v2raw.zones && Array.isArray(v2raw.registers) && Array.isArray(v2raw.shelves),
+        'v2 结构字段');
+      // v1 迁移：构造最小 v1 档 → 清 v2 → load → 折现与继承
+      var fakeV1 = { money: 500, day: 3, xp: 200, level: 3, prices: G.state.prices,
+        licenses: ['食品', '饮料'], cashier: true, negDays: 1,
+        shelves: [{ id: 'shelf0_0_0', productId: 'f_noodle', count: 5 }] };
+      localStorage.setItem('gss-save-v1', JSON.stringify(fakeV1));
+      localStorage.removeItem('gss-save-v2');
+      var migOk = G.load();
+      var refund = 5 * 1.20;   // 5 × f_noodle.cost
+      ck('save.migrateV1', migOk === true && G.state.day === 3 && G.state.level === 3 &&
+        Math.abs(G.state.money - (500 + refund)) < 0.01 &&
+        G.state.registers[0].staffed === true && G.state.zones.B === false &&
+        !!localStorage.getItem('gss-save-v1'),
+        '迁移：money=' + G.state.money + '（期 ' + (500 + refund) + '），v1 键保留');
+      ck('save.roundtripZones', (function () {
+        G.state.zones.W = true; G.save();
+        var rr = JSON.parse(localStorage.getItem('gss-save-v2'));
+        return rr.zones.W === true;
+      })(), 'zones 入档往返');
 
       /* --- 性能总闸门（B-T7）：会脏化 state，必须放在存档往返之后 --- */
       function countDrawables(node) {
@@ -1067,6 +1166,8 @@
     } catch (e) {
       runtimeErrors.push(String(e && e.stack || e));
       ck('selftest.exception', false, String(e && e.message || e));
+    } finally {
+      restoreSaveKeys();
     }
 
     ck('runtime.noError', runtimeErrors.length === 0, runtimeErrors.join(' | '));

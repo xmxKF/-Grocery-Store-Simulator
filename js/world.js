@@ -762,6 +762,7 @@
 
   function storeBox(slot, box) {
     if (!slot || slot.box || !box || !box.mesh) return false;
+    releaseStorageOf(box);   // 同一箱可能已占别位（直调 API 的读档/测试路径）：先解绑，杜绝「一箱两位」
     slot.box = box;
     box.mesh.position.set(slot.pos.x, 0.225, slot.pos.z);
     box.mesh.rotation.set(0, 0, 0);

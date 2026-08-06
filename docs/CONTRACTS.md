@@ -55,7 +55,7 @@ API：
 G.addMoney(delta, reason)   // 更新+emit('money')；不做负数校验之外的魔法
 G.addXP(n)                  // 处理升级，emit('xp'/'levelup')
 G.save(); G.load() /*->bool*/; G.resetSave()
-// save() 内部调用 G.world.serializeShelves() / 恢复时调用 G.world.restoreShelves(data)
+// save() 内部调用 G.world.serializeShelves()/serializeStorage()；load() 先按 zones 建区，再 restoreShelves/restoreStorage
 ```
 存档结构 `gss-save-v2`（照录）：
 ```js
@@ -100,6 +100,8 @@ G.world.serializeShelves() / G.world.restoreShelves(data)
 G.world.registers   // [{index, mesh, beltMesh, front:Vector3, queueSpots:[Vector3×4], zone}]（按区域解锁惰性建造）
 G.world.storageSlots // [{id, pos, marker, box:null|箱}]（仓库购买后建造，24 位）
 G.world.storeBox(slot, box) /*->bool*/  G.world.takeBox(slot) /*->box|null*/
+// takeBox 只解绑不搬箱（mesh 留在原位），调用方负责重新定位；storeBox 起手先解绑该箱的旧位，杜绝「一箱两位」
+G.world.serializeStorage() /*->[{id,pid,left}]*/  G.world.restoreStorage(data)   // restore 靠 slot.id 匹配，必须在 buildZone('W') 之后调用
 G.world.buildZone(z /*'B'|'C'|'W'*/)   // 幂等；自置位 zones[z]+开门+除collider+启用节点+建造该区设施
 ```
 店内寻路：`G.world.nav.findPath(from, to) -> [Vector3]`（走廊节点图 + Dijkstra；未解锁区域节点禁用，
