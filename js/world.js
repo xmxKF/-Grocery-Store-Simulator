@@ -585,6 +585,9 @@
       G.tex.on ? { map: G.tex.wallWainscot(segLen / 2, 1) } : null);
   }
 
+  /* collider 的可选字段 h（米）：只被 G.physics.syncStatics 读，省略视为 WALL_H。
+     寻路与玩家碰撞只读 minX/maxX/minZ/maxZ 四个 2D 字段，加 h 对它们零影响。 */
+
   /* 一段沿 x 铺开的墙（z 为墙面中线）：mesh + 一条厚 ±0.2 的 collider */
   function wallAlongX(x0, x1, z) {
     var len = x1 - x0;
@@ -613,11 +616,11 @@
         flatMat(0x9AA4AE, G.tex.on ? { map: G.tex.shelfMetal(2, 3) } : null));
       if (alongX) {
         m.position.set((s.minX + s.maxX) / 2, 1.5, s.z);
-        colliders.push({ minX: s.minX, maxX: s.maxX, minZ: s.z - 0.2, maxZ: s.z + 0.2, zoneGate: s.zone });
+        colliders.push({ minX: s.minX, maxX: s.maxX, minZ: s.z - 0.2, maxZ: s.z + 0.2, zoneGate: s.zone, h: 3.0 });
       } else {
         m.position.set(s.x, 1.5, (s.minZ + s.maxZ) / 2);
         m.rotation.y = Math.PI / 2;
-        colliders.push({ minX: s.x - 0.2, maxX: s.x + 0.2, minZ: s.minZ, maxZ: s.maxZ, zoneGate: s.zone });
+        colliders.push({ minX: s.x - 0.2, maxX: s.x + 0.2, minZ: s.minZ, maxZ: s.maxZ, zoneGate: s.zone, h: 3.0 });
       }
       m.userData.shutter = s.zone;
       addMesh(m, false, true);
@@ -723,7 +726,8 @@
     belt.userData.belt = true;
     belt.userData.registerId = i;
     addMesh(belt, true, true);
-    colliders.push({ minX: def.x - 1.0, maxX: def.x + 1.0, minZ: REGISTER_Z - 0.6, maxZ: REGISTER_Z + 0.6 });
+    // h = 传送带顶面 1.08（1.6×0.9 的传送带完全落在 2.0×1.2 的柜体足迹内），箱可以扔上台面
+    colliders.push({ minX: def.x - 1.0, maxX: def.x + 1.0, minZ: REGISTER_Z - 0.6, maxZ: REGISTER_Z + 0.6, h: 1.08 });
     var front = new THREE.Vector3(def.x, 0, 6.8);
     var spots = [];
     QUEUE_ZS.forEach(function (z) { spots.push(new THREE.Vector3(def.x, 0, z)); });
@@ -748,7 +752,7 @@
     var screen = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.03), flatMat(0x4C9BE8));
     screen.position.set(14, 0.85, 9.18);
     addMesh(screen, true, true);
-    colliders.push({ minX: 13.75, maxX: 14.25, minZ: 9.2, maxZ: 9.6 });
+    colliders.push({ minX: 13.75, maxX: 14.25, minZ: 9.2, maxZ: 9.6, h: 0.9 });
     registerInteractable(body, { type: 'computer', data: {}, prompt: '[E] 打开订货电脑' });
   }
 
@@ -757,7 +761,8 @@
     var bin = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.25, 0.6, 8), flatMat(0x5A6B5E));
     bin.position.set(-7.4, 0.3, 9.4);
     addMesh(bin, true, true);
-    colliders.push({ minX: -7.7, maxX: -7.1, minZ: 9.1, maxZ: 9.7 });
+    // 已知瑕疵：桶是圆柱 mesh 但 collider 是 0.6×0.6 方盒，箱会以方形边界弹开（观感可接受）
+    colliders.push({ minX: -7.7, maxX: -7.1, minZ: 9.1, maxZ: 9.7, h: 0.6 });
     registerInteractable(bin, { type: 'trash', data: {}, prompt: '[E] 丢弃纸箱' });
   }
 
@@ -852,6 +857,7 @@
     if (zone === 'C' && !registerAt(2)) buildRegister(2);
     if (zone === 'W') buildStorage();
     rebuildGraph();   // 该区货架建造新增 collider → 边失效，全量重建（微秒级）
+    if (G.physics) G.physics.syncStatics();   // 静态刚体与 colliders 同源，绝不留第二份
   }
 
   // ---------------------------------------------------------------
@@ -975,7 +981,7 @@
       });
     });
 
-    colliders.push({ minX: centerX - SHELF_W / 2, maxX: centerX + SHELF_W / 2, minZ: centerZ - SHELF_D / 2, maxZ: centerZ + SHELF_D / 2 });
+    colliders.push({ minX: centerX - SHELF_W / 2, maxX: centerX + SHELF_W / 2, minZ: centerZ - SHELF_D / 2, maxZ: centerZ + SHELF_D / 2, h: SHELF_H });
     nav.aisleSpots.push(aisleSpot);
 
     return { group: group, slots: groupSlots, aisleSpot: aisleSpot };
@@ -1008,7 +1014,10 @@
       built++;
     });
 
-    if (built > 0 && nav.entry) rebuildGraph();
+    if (built > 0 && nav.entry) {
+      rebuildGraph();
+      if (G.physics) G.physics.syncStatics();
+    }
   }
 
   // ---------------------------------------------------------------
@@ -1339,6 +1348,7 @@
     buildRoom();
     syncLayout();
     rebuildGraph();
+    if (G.physics) G.physics.syncStatics();
   }
 
   window.G = window.G || {};

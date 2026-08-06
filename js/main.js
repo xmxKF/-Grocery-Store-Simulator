@@ -103,6 +103,7 @@
     buildScene();
     buildRenderer();
 
+    G.physics.init();          // 必须在 world.init 之前：world.init 会走到 rebuildGraph → syncStatics
     G.world.init(scene);
     G.world.syncLayout();
     G.player.init(camera, canvasEl);
@@ -142,6 +143,7 @@
     if (!(dt > 0)) return;
 
     G.player.update(dt);
+    G.physics.update(dt);      // 在 player 之后：松手那一帧箱当帧就飞出去；在 customers 之前：顾客看到的是本帧最新箱位
     G.customers.update(dt);
     G.checkout.update(dt);
     G.shop.update(dt);
@@ -822,6 +824,45 @@
       ck('light.count', lights.amb === 1 && lights.hemi === 1 && lights.dir === 1 && lights.other === 0 &&
         (G.tex.on ? lights.castDir === 1 : lights.castDir === 0),
         JSON.stringify(lights) + ' on=' + G.tex.on);
+
+      /* --- D-T1 物理引擎与静态刚体（spec §2/§3/§4）--- */
+      ck('physics.engineLoaded',
+        typeof CANNON !== 'undefined' && CANNON.version === '0.6.2' &&
+        typeof CANNON.NaiveBroadphase === 'function' && !!G.physics && !!G.physics._test,
+        'CANNON ' + (typeof CANNON !== 'undefined' ? CANNON.version : 'undefined') +
+        '，G.physics ' + (G.physics ? 'ok' : '缺'));
+      ck('physics.staticsMatchColliders',
+        !!G.physics && G.physics._test.staticCount() === G.world.colliders.length + 2,
+        '静态体 ' + (G.physics ? G.physics._test.staticCount() : -1) +
+        ' / collider ' + G.world.colliders.length + ' + 2 plane');
+      var chOk = true, chBad = '';
+      for (var chi = 0; chi < G.world.colliders.length; chi++) {
+        var chc = G.world.colliders[chi];
+        var chH = (typeof chc.h === 'number') ? chc.h : (G.world.WALL_H || 3.6);
+        var chW = round2(chc.maxX - chc.minX), chD = round2(chc.maxZ - chc.minZ);
+        var want = null;
+        if (chc.zoneGate) want = 3.0;
+        else if (chW === 2 && chD === 0.8) want = 1.8;
+        else if (chW === 2 && chD === 1.2) want = 1.08;
+        if (!(chH > 0 && chH <= (G.world.WALL_H || 3.6))) { chOk = false; chBad = '#' + chi + ' h=' + chH + ' 越界'; break; }
+        if (want !== null && chH !== want) { chOk = false; chBad = '#' + chi + ' ' + chW + '×' + chD + ' h=' + chH + '，应 ' + want; break; }
+      }
+      ck('physics.colliderHeights', chOk, chBad || ('全部 ' + G.world.colliders.length + ' 条 collider 的 h 合规'));
+      var ceil9 = G.physics ? G.physics._test.probeCeiling(9.0) : 99;
+      var ceil12 = G.physics ? G.physics._test.probeCeiling(12.0) : 99;
+      var wallH = G.world.WALL_H || 3.6;
+      ck('physics.ceilingCaps', ceil9 <= wallH && ceil12 <= wallH,
+        '12 只箱 ×300 步 aabb 顶最大：v0=9.0 → ' + round2(ceil9) + '，v0=12.0 → ' + round2(ceil12) +
+        '（天花板 plane y=' + (G.physics ? G.physics.CEIL_Y : '?') + '，须 ≤ WALL_H ' + wallH + '）');
+      var tunV = G.player._test.throwConsts ? G.player._test.throwConsts().vMax : 9.0;
+      var tun = G.physics ? G.physics._test.probeTunnel(tunV) : { wallZ: 99, dropY: -1 };
+      ck('physics.noTunneling', tun.wallZ < 2.8 && tun.dropY > 0,
+        'v=' + tunV + ' 正对半厚 0.2 的墙（内面 z=2.8）120 步后 z=' + round2(tun.wallZ) +
+        '；竖直下扔 120 步后 y=' + round2(tun.dropY));
+      ck('physics.noInterpolatedQuaternion',
+        !!G.physics && G.physics._test.src().indexOf('interpolatedQuaternion') === -1,
+        'js/physics.js 整个模块（IIFE 全文）源码不得出现 interpolatedQuaternion（cannon 0.6.2 对醒着的动态体永不写入该字段，失效静默）');
+
       ck('shadow.rendererState', !renderer ||
         (renderer.shadowMap.enabled === !!G.tex.on && (!G.tex.on || renderer.shadowMap.type === THREE.PCFSoftShadowMap)),
         'shadowMap enabled=' + (renderer && renderer.shadowMap.enabled) + ' type=' + (renderer && renderer.shadowMap.type));
@@ -1295,6 +1336,11 @@
       G.world.buildZone('C');
       G.world.buildZone('W');
       G.world.syncLayout();
+
+      ck('physics.staticsAfterZoneOpen',
+        !!G.physics && G.physics._test.staticCount() === G.world.colliders.length + 2,
+        '全开后静态体 ' + (G.physics ? G.physics._test.staticCount() : -1) +
+        ' / collider ' + G.world.colliders.length + ' + 2 plane（buildZone 后必须已 syncStatics）');
 
       /* C-T2 修复轮：全开态关键点连通性（区域孤岛与死节点的回归防线） */
       var navAllOk = true, navBad = '';
