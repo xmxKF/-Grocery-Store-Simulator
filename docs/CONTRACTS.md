@@ -87,6 +87,30 @@ G.tex.labelBand(shape, accentHexString)   // 64²，repeat 恒 (1,1)
 G.tex._cache   // {canvases, textures}，双层缓存内部表，仅供自测
 ```
 
+### G.physics（physics.js）
+```js
+G.physics.init()                  // 建 CANNON.World（gravity (0,-9.82,0)、NaiveBroadphase、solver.iterations 10、allowSleep）
+                                  // + 地面 plane(y=0) + 天花板 plane(y=CEIL_Y=3.40)。
+                                  // 【必须在 G.world.init(scene) 之前调用】——world.init 会走到 rebuildGraph → syncStatics
+G.physics.syncStatics()           // 按 G.world.colliders 全量重建静态刚体（先清后建）；地/天花板 plane 不参与重建。
+                                  // 【唯一真相源】引擎静态刚体一律由此生成，绝不手写第二份几何表
+G.physics.update(dt)              // world.step(1/60, dt, 10)，然后把全部 loose 箱的 interpolatedPosition / quaternion 写回 box.mesh
+G.physics.attach(box)             // 由 mesh 当前 position/quaternion 建【动态】刚体，挂到 box.rb；幂等（先 detach）
+G.physics.attachStatic(box)       // 同上但 mass = 0（存储位用）
+G.physics.detach(box)             // 从 world 移除 box.rb，box.rb = null；幂等
+G.physics.throwBox(box, dir /*THREE.Vector3 单位向量*/, speed, spin /*{x,y,z}*/)   // attach 后设 velocity/angularVelocity
+G.physics.looseBoxes()            // -> [box]（箱实体，不是 body）。【只读、共用同一个内部数组，调用方不得持有跨帧】
+                                  // 调用方从 box.mesh.position 与 box.rb.velocity 取值
+G.physics.CEIL_Y                  // 3.40 = WALL_H − 0.20（spec §9.2 实测定值，改它必须重跑 physics.ceilingCaps）
+G.physics._test                   // 仅供自测：bodyCount() / staticCount()（只数 collider 静态体 + 2 plane，不含 slotted 箱）
+                                  // / hasBody(body) / stateOf(box) -> 'held'|'slotted'|'loose' / stepOnce()
+                                  // / src() / probeCeiling(v0) / probeTunnel(speed)
+```
+- **刚体引用字段名是 `box.rb`，不是 `box.body`**（`box.body` 已被占用：它是纸箱的纸板 mesh，且 `destroyBox` 会对它调 `geometry.dispose()`）。
+- **箱实体的所有权仍归 world.js**：`G.physics` 只持 `box.rb` 引用，`allBoxes()` 仍是唯一枚举口径。
+- `G.world.colliders` 的每条可带**可选**高度字段 `h`（米，缺省视为 `WALL_H` 3.6）。**`h` 只被 physics.syncStatics 读取；寻路（`segHitsBox`）与玩家碰撞（`collidesAt`）只读 `minX/maxX/minZ/maxZ` 四个 2D 字段，不得读 `h`。**
+- `rebuildGraph()` 的每一个调用点都必须紧跟一行 `if (G.physics) G.physics.syncStatics();`。漂移由断言 `physics.staticsMatchColliders` 钉死。
+
 ### G.world（world.js）
 ```js
 G.world.init(scene)               // 建店：地板/墙/门/货架/收银台/仓储电脑/卸货区/垃圾桶
@@ -113,7 +137,9 @@ G.world.releaseStorageOf(box)   // C-T4；按 box 反查并清空所占存储位
 G.world.serializeStorage() /*->[{id,pid,left}]*/  G.world.restoreStorage(data)   // C-T4；restore 靠 slot.id 匹配，必须在 buildZone('W') 之后调用；存档已改走 serializeBoxes，此对仅供旧 v2 档回落与自测
 G.world.allBoxes() /*->[box]*/   // C-终审；场上全部箱实体 = 交互体表里的箱 + G.player.carrying（举箱时交互体被摘除）；总数上限/序列化/清场的单一枚举
 G.world.destroyBox(box)          // C-终审；销毁一只箱（清存储位 + 摘交互体 + 出场景 + dispose 自有几何材质）
-G.world.serializeBoxes() /*->[{pid,left,where:'storage'|'yard'|'floor',slotId?,x?,z?}]*/  G.world.restoreBoxes(data)   // C-终审；restore 起手清场再重建，data 非数组时只清场；必须在 buildZone('W') 之后调用
+G.world.registerBoxInteractable(box)   // D 期导出；箱交互体的唯一登记入口（起手 retire 一次，保证「一 mesh 一交互体」），投掷落地后由 player.releaseThrow 调用
+G.world.serializeBoxes() /*->[{pid,left,where:'storage'|'yard'|'floor',slotId?,x?,z?,ry?}]*/  G.world.restoreBoxes(data)   // C-终审；restore 起手清场再重建，data 非数组时只清场；必须在 buildZone('W') 之后调用
+// ry（D 期）：绕 Y 的偏航（弧度）。所有箱一律按「落地平放」口径存档——y 恒 0.225 不入档，俯仰与翻滚丢弃。旧档无 ry 视为 0，v:2 不变更。
 G.world.WALL_H                   // 3.6；断言与文档的墙高单一真相（shadow.frustumCovers 采样高度读它）
 G.world.buildZone(z /*'B'|'C'|'W'*/)   // C-T1；幂等；自置位 zones[z]+开门+除collider+启用节点+建造该区设施
 G.world.zoneOf(x, z) /*->'core'|'A'|'B'|'C'|'W'|null*/   // C-T2；点落在哪个区域矩形（core 优先），findPath 目的地闸消费
@@ -133,12 +159,18 @@ G.player.carrying    // null | {mesh, productId, itemsLeft}（举着的纸箱，
 G.player.camera                 // 只读；init() 时记下的相机引用
 G.player.getPose()              // -> {x, z, yaw, pitch}（纯数值快照，非引用）
 G.player.setPose(pose)          // 设定玩家位姿并立即同步到相机；收银台进出用
+G.player._test   // 仅供自测：prompt(entry) / pickUp(box) / putDown() / storeInto(slot) / throwConsts()
+                 // / charge(tSec) / chargeState() / peekThrow() / throwNow() / setRmb(down)
+                 // / stepCharge(dt) / setHover(entry) / setMouseDown(down) / doInteractions()
+                 // / resetStockCooldown()
 ```
 - 点击 canvas 进入 Pointer Lock；WASD 移动（用 G.world.colliders 做 AABB 碰撞）；`'screen'` 事件打开界面时释放锁并忽略输入。
 - 准星射线 ≤3m 命中 interactable → `G.bus.emit('hover',{prompt})`；未命中发 `{prompt:null}`。
 - 按 E / 左键：box→捡起；持箱对 shelfSlot→放 1 件（调 `G.world.addItem`，箱空自动变垃圾提示）；对 trash→丢弃箱子；computer→`G.ui.showScreen('computer')`；register→`G.checkout.enterRegister(entry.data.register)`；shutter→`G.shop.buyZone(entry.data.zone)`（提示由 computePrompt 按等级/资金生成，失败 toast 原因）。
 - Tab 也可开电脑；Esc 关界面/释放锁。
 - `G.checkout.inRegister` 为真时 player 完全让出相机控制权，位姿由 checkout 显式还原（不再由 player 从相机反推）。
+- **持箱时按住右键蓄力、松开投掷**（D 期）：与准星指向何处无关，左键的两个既有语义（`mouseJustPressed` 点击交互、`mouseDown` 持箱按住连续上架）零改动、可与右键蓄力同时独立生效。蓄力中 `inRegister` / 有全屏界面 / 失去指针锁定 → 取消蓄力（箱留在手上）。
+- canvas 上注册 `contextmenu` → `e.preventDefault()`：指针锁定下多数浏览器已抑制右键菜单，但不得依赖。断言 `player.contextMenuSuppressed`。
 
 ### G.shop（shop.js）
 ```js
@@ -188,6 +220,7 @@ G.checkout._test    // 自测钩子：ease/registers()/frame(i)/tx(i)/scanAll(i)
 G.ui.init()
 G.ui.showScreen(name /*'menu'|'computer'|'summary'|null*/)   // emit('screen')
 G.ui.prompt(text|null); G.ui.toast(text, kind /*'ok'|'warn'|'danger'，省略为 'ok'；同时最多堆 3 条*/)
+G.ui.setCharge(v /*0..1 显示并设填充宽度；null 隐藏*/)   // D 期；#charge 蓄力力度条
 ```
 - 监听 bus 刷新 HUD；电脑界面三个标签：订货 / 定价 / 许可证（数据全来自 G.data/G.state/G.shop API）。
 - 样式全部按 `DESIGN.md`。
@@ -253,6 +286,10 @@ G.clamp(v, a, b)
 - lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js、world.js 与 customers.js 通过 G.tex.on 判断。
 - `belt.userData.belt`：world.js 打标（另带 `userData.registerId`）。C-T3 起 checkout 经 `G.world.registers[i].beltMesh` 直取自家台面，`userData.belt` 标记与 #4E5866 色值均不再承担 checkout 定位职责（色值红线仍在 DESIGN §5.4，属视觉契约）。
 - `userData.shell`：world.js 打标（`addShell()` 7 个调用点，满配实测 **21** 个壳体 mesh：地板 1 + 天花板 1 + 外墙 6 段 + 内隔墙 7 段 + 门框柱 4 + 东西院混凝土地面 2）、main.js 自测 shellNoCast 断言消费——壳体绝不 castShadow 的硬标记。
+- **静态刚体的单一真相源是 `G.world.colliders`**（D 期）：`G.physics.syncStatics()` 全量重建，绝不手写第二份几何表；`rebuildGraph()` 的每个调用点必须同步调 `syncStatics()`。断言 `physics.staticsMatchColliders` / `physics.staticsAfterZoneOpen`。
+- **`interpolatedQuaternion` 在本项目中禁止使用**（D 期）：cannon 0.6.2 对醒着的动态体根本不写入该字段（永远是单位四元数），失效是静默的（表现为「箱不转」）。位置写回用 `body.interpolatedPosition`，旋转写回用 `body.quaternion`。断言 `physics.noInterpolatedQuaternion` 源码级钉死。
+- **箱三态与其刚体形态一一对应**（D 期）：`held`（`G.player.carrying === box`）无刚体；`slotted`（`storageSlotOf(box) !== null`）静态刚体 `mass 0`；`loose`（其余）动态刚体。四个转移入口 `pickUpBox` / `putDownBox` / `storeBox` / `releaseThrow` 各恰好一行物理调用，另加 `spawnBox` / `takeBox` / `destroyBox` / `restoreBoxes` 四处非玩家路径。
+- **`G.customers._test.stepOne(c, dt)`**（D 期，仅供自测）：跑一名顾客的完整每帧流程（`stepKnockdown` → 非倒地时 `stepAvoid`/`stepMove`/`applyGait` → `stepState`），与 `update()` 的循环体同源同函数。
 
 ## 编码纪律
 - 不引入契约之外的跨模块调用；需要新接口时**停下上报**，不擅自加。
