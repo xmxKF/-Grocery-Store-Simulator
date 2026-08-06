@@ -42,6 +42,8 @@ G.bus.on(evt, fn); G.bus.off(evt, fn); G.bus.emit(evt, payload /*单个对象*/)
 - `'customerLeft'` {angry:boolean, reason} ；`'hover'` {prompt:string|null}
 - `'screen'` {name:string|null} （UI 打开/关闭全屏界面；player 据此暂停指针锁定）
 
+**本表为常用事件，完整事件集见文末「补充事件」段**（`zone` / `cashier` / `toggleOpen` / `nextDay` / `license` 等在那里）。
+
 ### G.data（data.js）
 - `G.data.PRODUCTS`: `[{id, name, cat, cost, market, boxSize, slotCap, unlockLevel, color, shape, scale?, accent?}]`（24 项；shape ∈ bottle|can|carton|bag|tub|jug|tray|produce；scale 省略视为 [1,1,1]；accent 省略时回退 color，当前 24 商品均显式给值）
 - `G.data.CONFIG`: `{startMoney, dayLengthSec, rentPerDay, deliverySec, spawnIntervalBase, patienceSec, ...}`（抄 GDD）
@@ -50,7 +52,7 @@ G.bus.on(evt, fn); G.bus.off(evt, fn); G.bus.emit(evt, payload /*单个对象*/)
 - `G.data.productById(id)`
 
 ### G.state（state.js）
-字段：`money, day, xp, level, prices{pid:number}, licenses[cat], clock(0..dayLengthSec), open:boolean, dayStats{revenue,cogs,customers,itemsSold}, zones:{A,B,C,W}, registers:[{owned,staffed}×3]`（`cashier` 字段废弃，仅迁移期兼容读）
+字段：`money, day, xp, level, prices{pid:number}, licenses[cat], clock(0..dayLengthSec), open:boolean, negDays(连续日结为负的天数，GDD §8 连续 3 天 → 游戏结束), dayStats{revenue,cogs,customers,itemsSold}, zones:{A,B,C,W}, registers:[{owned,staffed}×3]`（`cashier` 字段废弃，仅迁移期兼容读）
 API：
 ```js
 G.addMoney(delta, reason)   // 更新+emit('money')；不做负数校验之外的魔法
@@ -226,8 +228,13 @@ G.clamp(v, a, b)
 - `'toggleOpen'` {}：player 按 `O` 时 emit；**main.js** 处理开门/打烊逻辑。
 - `'nextDay'` {}：ui 日结算按钮 emit；**main.js** 处理进入次日 + `G.save()`。
 - `'license'` {cat}：shop.buyLicense 成功后 emit。
-- `'zone'` {zone}：shop.buyZone 成功后 emit（扣款与 `G.world.buildZone` 之后）。
-- **G.world.syncLayout()**：幂等；读取 `G.state.zones`、`G.state.level` 与 `G.state.licenses`，把已开放区域的货架/冷藏柜补齐到 GDD §4 区域表的目标状态。main.js 在 `'levelup'`、`'license'`、读档后调用。
+- `'zone'` {zone}：shop.buyZone 成功后 emit（扣款与 `G.world.buildZone` 之后）。ui 订阅它刷新电脑界面——`addMoney` 触发的那次 `refreshComputerIfOpen` 发生在 `buildZone` 之前（那一刻 `zones[z]` 还是 false、R2/R3 未建），不能靠它。
+- **G.world.syncLayout()**：幂等；读取 `G.state.zones`、`G.state.level` 与 `G.state.licenses`，把已开放区域的货架/冷藏柜补齐到 GDD §4 区域表的目标状态。main.js 在 `'levelup'`、`'license'`、读档后调用。真的建了 ≥1 组货架时自己调 `rebuildGraph()`（新 collider 可能打断既有导航边）。
+
+### 不变式（改动前先读）
+- **`G.world.buildZone(z)` 是区域建造的唯一入口**，运行期买区与读档重建共用它，二者产出的世界必须等价（C-终审实证 11 项逐字节等价：格位 / collider / 交互体 / 导航节点与边 / 收银台 / 存储位 …）。任何「读档时特事特办」的分支都是这条不变式的破口。
+- **场上纸箱实体总数 ≤ 48**（`spawnBox` 起手校验，GDD §3）：`G.world.allBoxes()` 是唯一枚举口径（交互体表里的箱 + `G.player.carrying`），序列化 / 清场 / 上限判定都走它。
+- `G.world.takeBox(slot)` **无生产调用方**（全项目只有 main.js 自测在调）：玩家从存储位搬箱走的是 `player.pickUpBox` + `G.world.releaseStorageOf(box)`。改 takeBox 不会影响玩家路径，反之亦然。
 - `#pos` 内部 DOM 由 **checkout.js** 全权构建（用上面共享类名）；其余 screen 的 DOM 由 ui.js 构建。
 - 时钟显示：ui.js 自行以 ~4Hz 轮询 `G.state.clock/open` 刷新，不设事件。
 - 收银员状态存 `G.state.registers[i].staffed`；`G.state.cashier` 废弃（仅迁移期兼容读）；自动收银逻辑在 checkout.js。

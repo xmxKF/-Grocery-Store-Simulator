@@ -71,7 +71,8 @@
     STORAGE_XS.forEach(function (x) { STORAGE_TABLE.push({ x: x, z: z }); });
   });   // 24 位（T4 消费；T1 只定义常量不建造）
 
-  /* 卸货区双点位：仓库未购 = 东侧人行道北段；已购 = 西侧仓库外 */
+  /* 卸货区东/西两套点位（各 12 位，同时只有一套生效）：仓库未购 = 东侧人行道北段；已购 = 西侧仓库外。
+     与 GDD §4「双点位」（指同一区域的两处出入口）同词异义，勿混 */
   var YARD_EAST = [];
   [16.6, 17.4, 18.2, 19.0].forEach(function (x) {
     [6.9, 7.7, 8.5].forEach(function (z) { YARD_EAST.push({ x: x, z: z }); });
@@ -456,6 +457,11 @@
     // 各自柜台膨胀盒内，任何方向的出边判定都会自阻塞，是永远零边的死节点；
     // 交给 nearestNode 的降级兜底去接最近的通路节点，最后一段直线短接（可接受）
     for (var ri = 0; ri < REGISTER_TABLE.length; ri++) {
+      /* R1（zone 'core'，x=-2）跳过：z=+4 内墙铺到 x=0、门缺口只在 x∈[-5,-3]，
+         它的队尾点 (-2,3.8) 落在该墙膨胀带内 0.45m 深，是全图唯一的零边死节点——
+         既接不上前厅走廊，又给人「这里有通路」的假象（断言 nav.noDeadNodes 守）。
+         R2/R3 处该墙不存在，节点有效。 */
+      if (REGISTER_TABLE[ri].zone === 'core') continue;
       addNavNode(REGISTER_TABLE[ri].x, 3.8, 'core');
     }
     // 仓库内部两点 + 卸货区两点（西卸货点订正 z=5.5→7：西门缺口膨胀后可通行带 z∈(6.45,7.55)）
@@ -702,6 +708,7 @@
     nav.findPath = findPath;
     nav.rebuildGraph = rebuildGraph;
     nav._segBlocked = segBlocked;
+    nav._nodes = navNodes;   // 自测钩子：死节点/连通性探针
   }
 
   function buildRegister(i) {
@@ -974,17 +981,23 @@
     return { group: group, slots: groupSlots, aisleSpot: aisleSpot };
   }
 
-  /* 分区惰性建造（幂等）：已开放区域的整行货架一次补齐；建造去重靠行上的 _built 标记 */
+  /* 分区惰性建造（幂等）：已开放区域的整行货架一次补齐；建造去重靠行上的 _built 标记。
+     建了货架就重建导航图：每组货架带一个 collider，既有边可能被它打断。当前表里的行
+     恰好都不跨 z=0 主过道故实测无边受影响（C-终审复核：冷藏 collider 新增 4 个、
+     192 条既有边无一被打断），但只要将来任何 SHELF_TABLE/FRIDGE_TABLE 行的 |z| < 0.75，
+     或新增跨 z=0 的 collider，不重建就会静默留下穿墙边。rebuildGraph 是微秒级，不省。 */
   function syncLayout() {
     if (!sceneRef) return;
     var zones = (G.state && G.state.zones) || { A: true };
     var licenses = (G.state && G.state.licenses) || [];
     var fresh = licenses.indexOf('生鲜') !== -1;
+    var built = 0;
 
     SHELF_TABLE.forEach(function (row, i) {
       if (row._built || !zones[row.zone]) return;
       buildRack('shelf' + i, row.x, row.z, false, row.aisleZ);
       row._built = true;
+      built++;
     });
 
     // 冷藏柜：区域开放 × 生鲜许可证 双门槛
@@ -992,7 +1005,10 @@
       if (row._built || !zones[row.zone] || !fresh) return;
       buildRack('fridge' + i, row.x, row.z, true, row.aisleZ);
       row._built = true;
+      built++;
     });
+
+    if (built > 0 && nav.entry) rebuildGraph();
   }
 
   // ---------------------------------------------------------------

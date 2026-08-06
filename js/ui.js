@@ -879,6 +879,11 @@
     G.bus.on('hover', onHover);
     G.bus.on('delivery', refreshComputerIfOpen);
     G.bus.on('license', refreshComputerIfOpen);
+    /* 'zone' 必须自己订阅：buyZone 的顺序是 addMoney → buildZone → emit('zone')，
+       而 addMoney 会同步触发 onMoney→refreshComputerIfOpen，那一刻 zones[z] 还是 false、
+       R2/R3 未建，电脑界面会照旧数据重绘。今天不出事只因买区入口是世界里的卷帘门交互
+       （此时电脑界面必然关着），把不变式钉死而不是靠「UI 此刻恰好关着」 */
+    G.bus.on('zone', refreshComputerIfOpen);
 
     setInterval(renderClock, 250);
     renderClock();

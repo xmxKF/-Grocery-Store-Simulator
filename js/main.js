@@ -1310,6 +1310,18 @@
       }
       ck('nav.fullOpenConnected', navAllOk, navBad || '全开态 entry→全部关键点可寻路');
 
+      /* C-final：零边节点是纯负担 + 假象——看着有节点，实际只能靠 nearestNode 降级走直线。
+         节点坐标与 collider 的余量只有 0.05-0.15m 量级，静默退化必须有断言兜住 */
+      var deadNodes = [];
+      var navList = G.world.nav._nodes || [];
+      for (var dn = 0; dn < navList.length; dn++) {
+        if (navList[dn].enabled && navList[dn].edges.length === 0) {
+          deadNodes.push('(' + round2(navList[dn].p.x) + ',' + round2(navList[dn].p.z) + ')');
+        }
+      }
+      ck('nav.noDeadNodes', deadNodes.length === 0,
+        '全开态 ' + navList.length + ' 个节点全部有出边；零边节点 ' + deadNodes.join(' '));
+
       /* C-T3：卷帘门开区后 mesh 只是 visible=false，交互体必须摘除，否则隐形门截胡门洞射线 */
       var shuttersLeft = G.world.interactables.filter(function (it) { return it.type === 'shutter'; }).length;
       ck('shop.shutterRetired', shuttersAtBoot === 3 && shuttersLeft === 0,
