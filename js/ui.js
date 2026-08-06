@@ -120,7 +120,8 @@
     continueBtn = el('button', 'btn btn-secondary', '继续');
     continueBtn.addEventListener('click', function () {
       if (continueBtn.hasAttribute('disabled')) return;
-      G.load();
+      // 读档失败必须停在菜单：进了游戏就会在日结时 G.save() 把损坏档永久覆写
+      if (!G.load()) { toast('存档已损坏，无法继续', 'danger'); return; }
       G.bus.emit('continueGame', {});
       showScreen(null);
     });

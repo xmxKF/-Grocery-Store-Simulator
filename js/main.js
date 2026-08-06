@@ -1088,6 +1088,19 @@
         G.state.registers[0].staffed === true && G.state.zones.B === false &&
         !!localStorage.getItem('gss-save-v1'),
         '迁移：money=' + G.state.money + '（期 ' + (500 + refund) + '），v1 键保留');
+      // spec §7「首次 save 写 v2」：v1 玩家若在首日日结前退出，不得下次启动再迁移一遍
+      var v2AfterMig = localStorage.getItem('gss-save-v2');
+      ck('save.migratePersist', !!v2AfterMig && JSON.parse(v2AfterMig).v === 2 && JSON.parse(v2AfterMig).day === 3,
+        '迁移后应立即落盘 v2：' + (v2AfterMig ? JSON.parse(v2AfterMig).v + '/day' + JSON.parse(v2AfterMig).day : 'null'));
+      // 损坏的 v2 不得吞掉 v1（否则静默开新档 → 日结覆写，v1 也失去意义）
+      localStorage.setItem('gss-save-v2', '{"v":2,');
+      localStorage.setItem('gss-save-v1', JSON.stringify(fakeV1));
+      var fallbackOk = G.load() === true && G.state.day === 3 && G.state.level === 3;
+      localStorage.setItem('gss-save-v2', '{"v":2,');
+      localStorage.removeItem('gss-save-v1');
+      var noneOk = G.load() === false;
+      ck('save.corruptFallback', fallbackOk && noneOk,
+        '坏 v2 + 好 v1 → 回落迁移 ' + fallbackOk + '；坏 v2 且无 v1 → 返回 false ' + noneOk);
       ck('save.roundtripZones', (function () {
         G.state.zones.W = true; G.save();
         var rr = JSON.parse(localStorage.getItem('gss-save-v2'));

@@ -163,22 +163,29 @@
 
   G.load = function () {
     try {
-      var raw = localStorage.getItem(SAVE_KEY);
-      var data = raw ? JSON.parse(raw) : null;
-      var migrated = null;
+      var data = null, migrated = null;
+      try {
+        var raw = localStorage.getItem(SAVE_KEY);
+        var parsed = raw ? JSON.parse(raw) : null;
+        // 更高版本的档按不可读处理：宁可回落 v1 / 报损坏，也不按 v2 语义误读
+        if (parsed && typeof parsed === 'object' && !(parsed.v > 2)) data = parsed;
+      } catch (e) {
+        data = null;   // v2 损坏不得吞掉玩家的 v1：落到下面的迁移路径
+      }
       if (!data) {
         var v1raw = localStorage.getItem(SAVE_KEY_V1);
         if (!v1raw) return false;
         data = migrateV1(JSON.parse(v1raw));
         migrated = data._refund;
       }
+      // 至此 parse/migrate 已成功；任何 G.state 赋值都不得早于这一行，否则坏档会把状态改成半截
       G.state.money = (typeof data.money === 'number') ? data.money : G.data.CONFIG.startMoney;
-      G.state.day = data.day || 1;
-      G.state.xp = data.xp || 0;
-      G.state.level = G.clamp(data.level || 1, 1, 10);
+      G.state.day = (typeof data.day === 'number') ? data.day : 1;
+      G.state.xp = (typeof data.xp === 'number') ? data.xp : 0;
+      G.state.level = G.clamp((typeof data.level === 'number') ? data.level : 1, 1, 10);
       G.state.prices = sanePrices(data.prices);
       G.state.licenses = saneLicenses(data.licenses);
-      G.state.negDays = data.negDays || 0;
+      G.state.negDays = (typeof data.negDays === 'number') ? data.negDays : 0;
       G.state.zones = data.zones && typeof data.zones === 'object'
         ? { A: true, B: !!data.zones.B, C: !!data.zones.C, W: !!data.zones.W }
         : { A: true, B: false, C: false, W: false };
@@ -204,6 +211,8 @@
       }
       if (G.world && G.world.restoreShelves && data.shelves) G.world.restoreShelves(data.shelves);
       if (G.world && G.world.restoreStorage && data.storage) G.world.restoreStorage(data.storage);
+      // spec §7「首次 save 写 v2」：立刻落盘，否则玩家在首个日结前退出会被重复迁移，期间消费全丢
+      if (migrated != null) G.save();
       return true;
     } catch (e) {
       return false;
