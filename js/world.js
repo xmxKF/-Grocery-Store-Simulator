@@ -829,7 +829,7 @@
       if (!box) continue;
       box.itemsLeft = d.left || 0;
       updateBoxVisual(box);
-      slot.box = box;
+      storeBox(slot, box);
     }
   }
 
