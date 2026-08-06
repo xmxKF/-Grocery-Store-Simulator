@@ -17,16 +17,19 @@
 | `css/style.css` | ui |
 | `js/data.js`、`js/state.js`、`js/shop.js` | economy |
 | `js/textures.js`、`js/world.js` | world |
+| `js/physics.js` | physics（D 期新增） |
+| `libs/cannon.min.js`（vendor 下载） | scaffold |
 | `js/player.js` | player |
 | `js/customers.js`、`js/checkout.js` | customers |
 | `js/ui.js` | ui |
 | `js/main.js`、`README.md` | integrator |
 
 `index.html` script 顺序（固定）：
-`libs/three.min.js` → `js/data.js` → `js/state.js` → `js/textures.js` → `js/world.js` → `js/player.js` → `js/shop.js` → `js/customers.js` → `js/checkout.js` → `js/ui.js` → `js/main.js`
+`libs/three.min.js` → `libs/cannon.min.js` → `js/data.js` → `js/state.js` → `js/textures.js` → `js/physics.js` → `js/world.js` → `js/player.js` → `js/shop.js` → `js/customers.js` → `js/checkout.js` → `js/ui.js` → `js/main.js`
+**`js/physics.js` 必须在 `js/world.js` 之前**（D 期）：`world.init()` 会走到 `rebuildGraph → syncStatics`，若 `G.physics` 未定义，`syncStatics()` 无从调用。
 
 `index.html` 固定 DOM id（ui/checkout 只能用这些容器）：
-`#app`(canvas 容器) `#hud` `#hud-money` `#hud-day` `#hud-clock` `#hud-level` `#crosshair` `#prompt` `#toast` `#screen-menu` `#screen-computer` `#screen-summary` `#pos` `#selftest`(隐藏 pre)
+`#app`(canvas 容器) `#hud` `#hud-money` `#hud-day` `#hud-clock` `#hud-level` `#crosshair` `#charge` `#prompt` `#toast` `#screen-menu` `#screen-computer` `#screen-summary` `#pos` `#selftest`(隐藏 pre)
 
 ## 全局命名空间 `G`
 
@@ -126,7 +129,7 @@ G.world.getStockCount(pid)
 G.world.spawnBox(pid, atPos /*可选 Vector3；省略走 activeYard 空位，满则返回 null*/)   // 生成纸箱实体 {mesh, productId, itemsLeft}，注册为可交互
 G.world.registerInteractable(obj3D, {type, data, prompt})   // type: 'box'|'shelfSlot'|'computer'|'register'|'trash'|'shutter'（shutter.data = {zone, label}；价格/等级门槛不入 data，单一真相是 CONFIG.zonePrices/zoneLevels）
 G.world.interactables             // 供 player 射线检测（含 mesh 引用）
-G.world.colliders                 // [{minX,maxX,minZ,maxZ}] 供 player/顾客做 AABB 限制
+G.world.colliders                 // [{minX,maxX,minZ,maxZ}] 供 player/顾客做 AABB 限制；另带可选 zoneGate 与（D 期）可选高度字段 h，详见下方 G.physics 段
 G.world.nav = { entry, exit, aisleSpots:[Vector3], registers /*= G.world.registers 同引用*/ }   // 旧 queueSpots/registerFront 已于 T3 删除
 G.world.serializeShelves() / G.world.restoreShelves(data)
 G.world.registers   // [{index, mesh, beltMesh, front:Vector3, queueSpots:[Vector3×4], zone}]（按区域解锁惰性建造）
@@ -137,7 +140,7 @@ G.world.releaseStorageOf(box)   // C-T4；按 box 反查并清空所占存储位
 G.world.serializeStorage() /*->[{id,pid,left}]*/  G.world.restoreStorage(data)   // C-T4；restore 靠 slot.id 匹配，必须在 buildZone('W') 之后调用；存档已改走 serializeBoxes，此对仅供旧 v2 档回落与自测
 G.world.allBoxes() /*->[box]*/   // C-终审；场上全部箱实体 = 交互体表里的箱 + G.player.carrying（举箱时交互体被摘除）；总数上限/序列化/清场的单一枚举
 G.world.destroyBox(box)          // C-终审；销毁一只箱（清存储位 + 摘交互体 + 出场景 + dispose 自有几何材质）
-G.world.registerBoxInteractable(box)   // D 期导出；箱交互体的唯一登记入口（起手 retire 一次，保证「一 mesh 一交互体」），投掷落地后由 player.releaseThrow 调用
+G.world.registerBoxInteractable(box)   // D 期导出；箱交互体的唯一登记入口（起手 retire 一次，保证「一 mesh 一交互体」），投掷松手时由 player.releaseThrow 调用
 G.world.serializeBoxes() /*->[{pid,left,where:'storage'|'yard'|'floor',slotId?,x?,z?,ry?}]*/  G.world.restoreBoxes(data)   // C-终审；restore 起手清场再重建，data 非数组时只清场；必须在 buildZone('W') 之后调用
 // ry（D 期）：绕 Y 的偏航（弧度）。所有箱一律按「落地平放」口径存档——y 恒 0.225 不入档，俯仰与翻滚丢弃。旧档无 ry 视为 0，v:2 不变更。
 G.world.WALL_H                   // 3.6；断言与文档的墙高单一真相（shadow.frustumCovers 采样高度读它）
@@ -239,7 +242,7 @@ G.ui.setCharge(v /*0..1 显示并设填充宽度；null 隐藏*/)   // D 期；#
     1. `--user-data-dir` 会把 `gss-lowfx` 留在 profile 里。两态必须用**各自独立**的 profile 目录并在**每次跑前 `rm -rf`**，否则正常态会静默跑成 lowfx（表现为断言总数变少、`tex.*` 整块消失）。
     2. **`&lowfx=1` URL 参数不存在。** lowfx 态只能用跳板页：一个临时 html 先 `localStorage.setItem('gss-lowfx','1')` 再 `location.replace('index.html?selftest=1')`，且必须带 `--allow-file-access-from-files`。
     3. 在受沙箱约束的 shell 里调用 headless Edge 会静默产出 0 字节 DOM（无报错）。必须在不受沙箱约束的方式下调用。
-  - 当前基线：正常态 **124/124**、lowfx **119/119**（C-T8 实测）。
+  - 当前基线：正常态 **132/132**、lowfx **127/127**（D-T0 实测）。
 
 ## 共享工具（state.js 提供，全模块可用）
 ```js
@@ -281,7 +284,6 @@ G.clamp(v, a, b)
 - 上架飞行动画队列 `G.world._flights`（仅供自测）：`[{mesh, from, to, t0, slot, onDone, pid, idx}]`，`stepFlights` 自驱 rAF 消费。
 - `G.customers._test`：自测钩子（spawnOne / gait / addHand / remove），仅 ?selftest 使用。spawnOne 返回的对象带 `items` 与 `popItem`，便于验手持不变式。
 - `G.world._tagStats()`（仅供自测）：`{cache: TAG_TEX, disposed: 累计 dispose 次数}`，用于钉死价签贴图缓存不泄漏。
-- `G.player._test`（仅供自测）：`prompt(entry)` —— 不经 DOM 直接取某个交互体的提示文案。
 - **顾客手持渲染上限 6 件**（C-T7）：`addHandCube` 超过 6 件不再建 mesh，`popItem` 守不变式 `hands.children.length === min(items.length, 6)`。逻辑 `items` 不受影响（清单最多 6 条 ×2 件 = 12 件），结账金额与库存扣减照常。
 - lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js、world.js 与 customers.js 通过 G.tex.on 判断。
 - `belt.userData.belt`：world.js 打标（另带 `userData.registerId`）。C-T3 起 checkout 经 `G.world.registers[i].beltMesh` 直取自家台面，`userData.belt` 标记与 #4E5866 色值均不再承担 checkout 定位职责（色值红线仍在 DESIGN §5.4，属视觉契约）。
