@@ -43,7 +43,9 @@
       sun.shadow.mapSize.set(4096, 4096);
       sun.shadow.camera.left = -26; sun.shadow.camera.right = 26;
       sun.shadow.camera.top = 26; sun.shadow.camera.bottom = -26;
-      sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
+      /* near 才是阴影视锥的真实瓶颈（不是 ±26 正交框）：near=1 时最紧角点——东院围栏
+         东北角 (20.4, 3.6, 10.2)——只剩 0.23m 余量，near=0.5 把余量翻到 0.7m 以上 */
+      sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 60;
       sun.shadow.bias = -0.0004;
       sun.shadow.normalBias = 0.03;
     } else {
@@ -817,7 +819,7 @@
         'shadowMap enabled=' + (renderer && renderer.shadowMap.enabled) + ' type=' + (renderer && renderer.shadowMap.type));
       var sunRef = null;
       scene.traverse(function (o) { if (!sunRef && o.isDirectionalLight) sunRef = o; });
-      var frusOk = true, frusDetail = '';
+      var frusOk = true, frusDetail = '', frusSlack = Infinity, frusTight = '';
       if (G.tex.on && sunRef) {
         /* 无头环境从不渲染，shadow camera 的矩阵不会被渲染器更新——手动摆位后再取逆矩阵 */
         var shCam = sunRef.shadow.camera;
@@ -829,9 +831,21 @@
         var toLight = new THREE.Matrix4().copy(shCam.matrixWorldInverse);
         for (var ci = 0; ci < G.world.colliders.length && frusOk; ci++) {
           var col = G.world.colliders[ci];
-          var xs = [col.minX, col.maxX], zs = [col.minZ, col.maxZ], ys = [0, 3];
+          /* 采样高度读 WALL_H：字面量 3 是 WALL_H=3.0 时代的残留，C 期墙高 3.6 后
+             墙顶 3.0-3.6 段从未被验证在视锥内 */
+          var xs = [col.minX, col.maxX], zs = [col.minZ, col.maxZ];
+          var ys = [0, (G.world.WALL_H || 3.6)];
           for (var a = 0; a < 2; a++) for (var b = 0; b < 2; b++) for (var d = 0; d < 2; d++) {
             var pt = new THREE.Vector3(xs[a], ys[d], zs[b]).applyMatrix4(toLight);
+            /* 六个面的最小余量：真实瓶颈是 near 而不是正交框，余量塌到 0 的那一刻
+               表现是「东院方向抬高的物件影子突然消失」，无人会想到是视锥 */
+            var slack = Math.min(pt.x - shCam.left, shCam.right - pt.x,
+              pt.y - shCam.bottom, shCam.top - pt.y,
+              (-pt.z) - shCam.near, shCam.far - (-pt.z));
+            if (slack < frusSlack) {
+              frusSlack = slack;
+              frusTight = '#' + ci + '(' + round2(xs[a]) + ',' + ys[d] + ',' + round2(zs[b]) + ')';
+            }
             if (pt.x < shCam.left || pt.x > shCam.right || pt.y < shCam.bottom || pt.y > shCam.top ||
                 -pt.z < shCam.near || -pt.z > shCam.far) {
               frusOk = false;
@@ -841,7 +855,10 @@
           }
         }
       }
-      ck('shadow.frustumCovers', frusOk, frusDetail || (G.tex.on ? '全部 collider 角点在阴影视锥内' : 'lowfx 跳过'));
+      ck('shadow.frustumCovers', frusOk, frusDetail || (G.tex.on
+        ? ('全部 collider 角点在阴影视锥内（采样高度 y=0..WALL_H ' + (G.world.WALL_H || 3.6) +
+           '，最小余量 ' + round2(frusSlack) + 'm @ collider' + frusTight + '）')
+        : 'lowfx 跳过'));
       var shellOk = true;
       scene.traverse(function (o) {
         if (o.isMesh && o.castShadow) {

@@ -142,7 +142,9 @@ font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC",
 - `AmbientLight(0xFFFFFF, 0.12)`——保底不死黑
 - `DirectionalLight(0xFFF6E5, 0.85)` @ `(8,14,6)`，`castShadow = true`（唯一投影灯）
 
-阴影参数（**C-T8 实测回写**，值取自 `main.js buildScene()` 实读 + 全开态 collider 实测）：世界 AABB x∈[-20.4, 20.4]、z∈[-10.2, 10.7]（全开态 40 个 collider 的并集：32×20 主壳 + 东西两院围栏），y∈[0, `WALL_H` 3.6] → shadow camera：`ortho ±26`、`near 1`、`far 60`；`mapSize 4096²`（≈1.27cm/texel，52m/4096——与 B 期 26m/2048 同精度）；`bias -0.0004`、`normalBias 0.03`（flatShading Box 用 normalBias 防痤疮不产生 peter-panning）；`renderer.shadowMap.type = PCFSoftShadowMap`。断言 `shadow.frustumCovers` 逐 collider 取 8 角点验证全部落在该视锥内（高度只采样到 y=3，未覆盖 3.0-3.6 的墙顶段）。
+阴影参数（**C-T8 实测回写**，值取自 `main.js buildScene()` 实读 + 全开态 collider 实测）：世界 AABB x∈[-20.4, 20.4]、z∈[-10.2, 10.7]（全开态 40 个 collider 的并集：32×20 主壳 + 东西两院围栏），y∈[0, `WALL_H` 3.6] → shadow camera：`ortho ±26`、`near 0.5`、`far 60`；`mapSize 4096²`（≈1.27cm/texel，52m/4096——与 B 期 26m/2048 同精度）；`bias -0.0004`、`normalBias 0.03`（flatShading Box 用 normalBias 防痤疮不产生 peter-panning）；`renderer.shadowMap.type = PCFSoftShadowMap`。断言 `shadow.frustumCovers` 逐 collider 取 8 角点验证全部落在该视锥内，采样高度 y ∈ [0, `WALL_H`]（**C-终审订正**：原为字面量 3，是 WALL_H=3.0 时代的残留，墙顶 3.0-3.6 段从未被验证过；现改读 `G.world.WALL_H`）。
+
+**【near 余量】阴影视锥的真实瓶颈是 `near` 而不是 ±26 正交框。**实测（全开态 40 个 collider × 8 角点，取六个面的最小余量）：`near=1` + y→3.0 余量 0.72m、y→3.6 仅 **0.23m**、y→4.0 直接 FAIL；最紧角点恒为东院围栏东北角 (20.4, WALL_H, 10.2)。C-终审将 `near` 1→**0.5**，余量回到 **0.73m**（断言 detail 自带实测值与最紧角点）。【警告】东院方向任何抬高的物件（更高围栏、货车、招牌、雨棚）会**静默掉出阴影视锥**，表现为影子突然消失而非报错——动东院几何前先看这条断言的余量。
 
 cast / receive 矩阵：
 
