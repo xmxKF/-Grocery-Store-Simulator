@@ -44,9 +44,9 @@
     dayLengthSec: 300,
     deliverySec: 25,
     deliveryFeePerBox: 3,
-    maxBoxesPerOrder: 8,       // Lv9 起 12（见 G.data.LEVELS）
+    maxBoxesPerOrder: 8,       // Lv7 起 12（见 G.data.LEVELS）
     maxBoxesInYard: 12,
-    rentPerDay: 40,            // Lv8 扩建后 80（见 G.data.LEVELS）
+    rentPerDay: 40,            // 基础房租；每开一区另计 rentPerZone
     utilPerShelf: 2,
     utilPerFridge: 4,
     cashierHireCost: 200,
@@ -63,21 +63,25 @@
     interactRange: 3.0,
     defaultMarkup: 1.20,
     licensePrice: { '日用品': 120, '生鲜': 350 }, // 食品/饮料开局赠送
-    bankruptDays: 3
+    bankruptDays: 3,
+    zonePrices: { B: 1500, C: 3200, W: 900 },
+    zoneLevels: { B: 5, C: 8, W: 3 },
+    rentPerZone: { W: 20, B: 30, C: 40 }
   };
 
-  // GDD.md §9 等级表（xpNeeded 为累计值），附加机器可读字段供 world.js / shop.js 使用
+  // 等级表（xpNeeded 为累计值），附加机器可读字段供 world.js / shop.js 使用。
+  // 货架数量随「区域」而非等级增长，故不再有 shelfGroups / expansion 字段（design §6）。
   var LEVELS = [
-    { level: 1,  xpNeeded: 0,    shelfGroups: 4, unlock: '开局持有【食品】【饮料】许可证；4 组货架（24 格）' },
-    { level: 2,  xpNeeded: 60,   unlock: '可购买【日用品】许可证（¥120）；金穗大米' },
-    { level: 3,  xpNeeded: 160,  shelfGroups: 5, unlock: '+1 组货架（30 格）；可购买【生鲜】许可证（¥350，附赠 2 台冷藏柜）；橙汁 / 苹果 / 香蕉' },
-    { level: 4,  xpNeeded: 320,  unlock: '巧克力 / 茶饮 / 鸡蛋' },
-    { level: 5,  xpNeeded: 550,  unlock: '咖啡 / 牛奶 / 洗衣粉' },
-    { level: 6,  xpNeeded: 850,  shelfGroups: 6, unlock: '+1 组货架（36 格）；金枪鱼罐头 / 吐司 / 牙刷' },
-    { level: 7,  xpNeeded: 1250, unlock: '能量饮 / 垃圾袋' },
-    { level: 8,  xpNeeded: 1750, shelfGroups: 8, expansion: true, unlock: '店铺扩建：+2 组货架（48 格），房租 ¥40→¥80，同屏顾客上限 +2' },
-    { level: 9,  xpNeeded: 2400, maxBoxesPerOrder: 12, unlock: '电池；单次订货上限 8→12 箱' },
-    { level: 10, xpNeeded: 3200, cashierAvailable: true, unlock: '可雇佣收银员（一次性 ¥200 + ¥60/天）' }
+    { level: 1,  xpNeeded: 0,    unlock: '区域 A（4 架=24 格）+ R1；食品/饮料证' },
+    { level: 2,  xpNeeded: 60,   unlock: '日用品证 ¥120；大米/抽纸/洗手液' },
+    { level: 3,  xpNeeded: 160,  warehouseAvailable: true, unlock: '生鲜证 ¥350（附 A 区 2 冷藏 → 36 格）；★仓库 ¥900（24 箱位，送货点迁仓库）；橙汁/苹果/香蕉' },
+    { level: 4,  xpNeeded: 320,  unlock: '巧克力/茶饮/鸡蛋' },
+    { level: 5,  xpNeeded: 550,  zoneB: true, unlock: '★区域 B ¥1500（6 架+2 冷藏 → 84 格，附带 R2）；咖啡/牛奶/洗衣粉' },
+    { level: 6,  xpNeeded: 850,  unlock: '金枪鱼/吐司/牙刷' },
+    { level: 7,  xpNeeded: 1250, maxBoxesPerOrder: 12, unlock: '单次订货 8→12 箱；能量饮/垃圾袋' },
+    { level: 8,  xpNeeded: 1750, zoneC: true, unlock: '★区域 C ¥3200（6 架 → 120 格，附带 R3）；生菜' },
+    { level: 9,  xpNeeded: 2400, unlock: '电池' },
+    { level: 10, xpNeeded: 3200, cashierAvailable: true, unlock: '可雇收银员（每台 ¥200+¥60/天）；顾客上限 20' }
   ];
 
   G.data = {

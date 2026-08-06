@@ -18,11 +18,12 @@
     return max;
   }
 
+  /* 只数落在卸货区箱位上的箱：仓库 24 位不计入订单校验（design §5），否则存满仓库会反锁死订货 */
   function countYardBoxes() {
     if (!G.world || !G.world.interactables) return 0;
     var count = 0;
     G.world.interactables.forEach(function (it) {
-      if (it.type === 'box') count++;
+      if (it.type === 'box' && G.world.isOnYard(it.mesh)) count++;
     });
     return count;
   }
@@ -120,17 +121,15 @@
     return true;
   }
 
-  /* 区域扩建：卷帘门定义在 world.js（SHUTTERS），价格/等级门槛在此保一份，T5 迁入 CONFIG */
-  var ZONE_PRICES = { B: 1500, C: 3200, W: 900 };
-  var ZONE_LEVELS = { B: 5, C: 8, W: 3 };
-
+  /* 区域扩建：卷帘门定义在 world.js（SHUTTERS），价格/等级门槛在 CONFIG */
   function buyZone(z) {
-    if (!(z in ZONE_PRICES)) return false;
+    var prices = G.data.CONFIG.zonePrices, levels = G.data.CONFIG.zoneLevels;
+    if (!(z in prices)) return false;
     if (G.state.zones[z]) return false;
-    if (G.state.level < ZONE_LEVELS[z]) return false;
-    if (G.state.money < ZONE_PRICES[z]) return false;
+    if (G.state.level < levels[z]) return false;
+    if (G.state.money < prices[z]) return false;
 
-    G.addMoney(-ZONE_PRICES[z], 'zone');
+    G.addMoney(-prices[z], 'zone');
     G.world.buildZone(z);   // 幂等：自置位 zones[z] + 开门 + 除 collider + 建造该区设施
     G.bus.emit('zone', { zone: z });
     return true;

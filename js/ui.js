@@ -76,11 +76,13 @@
     return sum;
   }
 
-  /* 卸货区（含已搬进店里的）现存箱数，与 shop.js 的上限判定口径一致 */
+  /* 卸货区箱位上现存箱数（仓库存箱不计），与 shop.js 的上限判定口径一致 */
   function yardBoxCount() {
     var list = (G.world && G.world.interactables) || [];
     var n = 0;
-    for (var i = 0; i < list.length; i++) { if (list[i].type === 'box') n++; }
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].type === 'box' && G.world.isOnYard(list[i].mesh)) n++;
+    }
     return n;
   }
 
@@ -533,43 +535,55 @@
     });
 
     if (G.state.level >= 10) {
-      var cRow = el('div', 'list-row');
-      var cDot = el('span', 'cat-dot');
-      cDot.style.background = 'var(--text-dim)';
-      cRow.appendChild(cDot);
-      var cName = el('span', null, '收银员');
-      cName.style.flex = '1';
-      cRow.appendChild(cName);
-
-      // 逐台雇佣的 UI 随 T5 落地，本期仍只操作 R1
-      if (G.state.registers[0].staffed) {
-        var fireBtn = el('button', 'btn btn-danger', '解雇');
-        fireBtn.style.marginLeft = 'auto';
-        fireBtn.addEventListener('click', function () {
-          G.shop.fireCashier(0);
-          renderLicenseTab();
-        });
-        cRow.appendChild(fireBtn);
-      } else {
-        var hireBtn = el('button', 'btn btn-primary',
-          '雇佣 ' + G.fmt(G.data.CONFIG.cashierHireCost) + ' + ' + G.fmt(G.data.CONFIG.cashierWage) + '/天');
-        hireBtn.style.marginLeft = 'auto';
-        if (G.state.money < G.data.CONFIG.cashierHireCost) {
-          hireBtn.setAttribute('disabled', 'disabled');
-          hireBtn.title = '余额不足';
-        }
-        hireBtn.addEventListener('click', function () {
-          if (G.shop.hireCashier(0)) {
-            toast('已雇佣收银员', 'ok');
-            renderLicenseTab();
-          }
-        });
-        cRow.appendChild(hireBtn);
+      var regs = G.state.registers || [];
+      for (var ri = 0; ri < regs.length; ri++) {
+        if (regs[ri].owned) list.appendChild(cashierRow(ri));
       }
-      list.appendChild(cRow);
     }
 
     licenseBody.appendChild(list);
+  }
+
+  var REGISTER_MARKS = ['①', '②', '③'];
+
+  function registerLabel(i) { return '收银台' + (REGISTER_MARKS[i] || (i + 1)); }
+
+  /* 已购买的每台收银台一行，独立雇佣/解雇 */
+  function cashierRow(i) {
+    var row = el('div', 'list-row');
+    var dot = el('span', 'cat-dot');
+    dot.style.background = 'var(--text-dim)';
+    row.appendChild(dot);
+
+    var name = el('span', null, registerLabel(i) + ' 收银员');
+    name.style.flex = '1';
+    row.appendChild(name);
+
+    if (G.state.registers[i].staffed) {
+      var fireBtn = el('button', 'btn btn-danger', '解雇');
+      fireBtn.style.marginLeft = 'auto';
+      fireBtn.addEventListener('click', function () {
+        G.shop.fireCashier(i);
+        renderLicenseTab();
+      });
+      row.appendChild(fireBtn);
+    } else {
+      var hireBtn = el('button', 'btn btn-primary',
+        '雇佣 ' + G.fmt(G.data.CONFIG.cashierHireCost) + ' + ' + G.fmt(G.data.CONFIG.cashierWage) + '/天');
+      hireBtn.style.marginLeft = 'auto';
+      if (G.state.money < G.data.CONFIG.cashierHireCost) {
+        hireBtn.setAttribute('disabled', 'disabled');
+        hireBtn.title = '余额不足';
+      }
+      hireBtn.addEventListener('click', function () {
+        if (G.shop.hireCashier(i)) {
+          toast('已雇佣' + registerLabel(i) + ' 收银员', 'ok');
+          renderLicenseTab();
+        }
+      });
+      row.appendChild(hireBtn);
+    }
+    return row;
   }
 
   /* ---------------------------------------------------------------

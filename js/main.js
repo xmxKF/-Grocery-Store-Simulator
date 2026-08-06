@@ -242,6 +242,14 @@
 
   function round2(v) { return Math.round(v * 100) / 100; }
 
+  /* 工资按 staffed 的收银台台数计（design §6） */
+  function staffedWage() {
+    var regs = G.state.registers || [];
+    var n = 0;
+    for (var i = 0; i < regs.length; i++) if (regs[i].staffed) n++;
+    return n * G.data.CONFIG.cashierWage;
+  }
+
   function endDay() {
     if (phase !== 'closing') return;
     phase = 'summary';
@@ -250,13 +258,13 @@
 
     var cfg = G.data.CONFIG;
     var racks = countRacks();
-    var staffed = 0;
-    var regStates = G.state.registers || [];
-    for (var ri = 0; ri < regStates.length; ri++) if (regStates[ri].staffed) staffed++;
-    var rent = (G.state.level >= 8 ? 80 : cfg.rentPerDay)          // Lv8 扩建后房租翻倍
+    var rentZ = cfg.rentPerZone || {};
+    var zones = G.state.zones || {};
+    var rent = cfg.rentPerDay                                      // 基础房租 + 每个已开区域的租金
+      + (zones.W ? rentZ.W : 0) + (zones.B ? rentZ.B : 0) + (zones.C ? rentZ.C : 0)
       + racks.shelfGroups * cfg.utilPerShelf
       + racks.fridges * cfg.utilPerFridge
-      + staffed * cfg.cashierWage;
+      + staffedWage();
     rent = round2(rent);
 
     var ds = G.state.dayStats;
@@ -486,6 +494,25 @@
       }
       ck('world.freeYardSlotNull', lastSpawn === false && spawned <= 12,
         '卸货区满后 spawnBox 必须返回 null（本轮成功 ' + spawned + ' 箱，含前序残留合计 ≤12 位）');
+
+      /* --- C-T5 经济 --- */
+      ck('level.tableV2', G.data.LEVELS.length === 10 &&
+        G.data.CONFIG.zonePrices && G.data.CONFIG.zonePrices.B === 1500 &&
+        G.data.CONFIG.rentPerZone && G.data.CONFIG.rentPerZone.C === 40,
+        'LEVELS/zonePrices/rentPerZone 新表');
+
+      /* 买仓库不得反锁死订货：订单容量只看卸货区 12 位，仓库 24 位不计入（spec §5）。
+         现场即上一条留下的满院——把其中一箱挪进仓库位后订货必须重新放行 */
+      var fullReject = G.shop.orderBoxes([{ pid: 'f_noodle', qty: 1 }]);
+      var yardBox = null;
+      for (var ybi = 0; ybi < G.world.interactables.length && !yardBox; ybi++) {
+        var ybIt = G.world.interactables[ybi];
+        if (ybIt.type === 'box' && G.world.isOnYard(ybIt.mesh)) yardBox = ybIt.data.box;
+      }
+      var ybStored = !!yardBox && G.world.storeBox(G.world.storageSlots[1], yardBox);
+      var afterStore = G.shop.orderBoxes([{ pid: 'f_noodle', qty: 1 }]);
+      ck('shop.orderRejectWhenFull', fullReject === false && ybStored === true && afterStore === true,
+        '满院拒单 ' + fullReject + '，入仓一箱后放行 ' + afterStore);
 
       /* --- 价签与命中盒（Task 3）--- */
       var tagOk = true, hitOk = true, tagDetail = '';
@@ -938,7 +965,9 @@
       ck('day.end', ended && summaries.length === 1, 'phase=' + phase + '，summary ' + summaries.length + ' 次');
 
       var s = summaries[0] || {};
-      var expRent = 40 + 4 * 2;   // Lv1：房租 40 + 4 组普通货架水电 8，无冷藏柜、无收银员
+      // Lv1：基础房租 40 + 仓库 20（C-T4 块把 zones.W 打开了）+ 4 组普通货架水电 8；
+      // 无冷藏柜（0）、无 staffed 收银员（0）→ 68
+      var expRent = 40 + 20 + 4 * 2;
       ck('summary.rent', Math.abs(s.rent - expRent) < 0.01, '固定支出 ' + s.rent + ' / 预期 ' + expRent);
       ck('summary.profit', Math.abs(s.profit - (s.revenue - s.cogs - s.rent)) < 0.01, JSON.stringify(s));
       ck('summary.rentCharged', Math.abs(rentCharged - expRent) < 0.01, '实扣 ' + round2(rentCharged));

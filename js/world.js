@@ -1122,6 +1122,17 @@
     box.body.material.color.set(empty ? 0x8A6538 : 0xC08B4E);
   }
 
+  /* mesh 是否停在当前卸货区的某个箱位上（判据与 freeYardSlot 的占用检测一致）。
+     订单容量校验用：仓库存储位与店内搬运中的箱都不算在卸货区 12 位里 */
+  function isOnYard(mesh) {
+    if (!mesh) return false;
+    var yard = activeYardPositions();
+    for (var i = 0; i < yard.length; i++) {
+      if (Math.abs(mesh.position.x - yard[i].x) < 0.3 && Math.abs(mesh.position.z - yard[i].z) < 0.3) return true;
+    }
+    return false;
+  }
+
   /* 找一个当前没有箱子占用的箱位：箱子被搬走/丢弃后数量不再等于占用情况，按数量取模会叠箱 */
   function freeYardSlot() {
     var yard = activeYardPositions();
@@ -1211,6 +1222,7 @@
     buildZone: buildZone,
     zoneOf: zoneOf,
     storageSlots: storageSlots,
+    isOnYard: isOnYard,
     storeBox: storeBox,
     takeBox: takeBox,
     releaseStorageOf: releaseStorageOf,

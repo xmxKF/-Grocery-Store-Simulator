@@ -74,17 +74,22 @@
     return cache[k];
   }
 
-  /* ---------- 生成参数（GDD §6） ---------- */
+  /* ---------- 生成参数（design §6） ---------- */
+  function zonesOpenCount() {
+    var z = (G.state && G.state.zones) || {};
+    return ((z.B ? 1 : 0) + (z.C ? 1 : 0));   // zonesOpen = 已开购物区数 − 1（A 恒开）
+  }
+
   function spawnInterval() {
     var base = num(cfg().spawnIntervalBase, 20);
     var day = num(G.state && G.state.day, 1);
     var lv = num(G.state && G.state.level, 1);
-    return G.clamp(base - 0.8 * (day - 1) - 1.2 * (lv - 1), 5, 20) * G.rand(0.75, 1.25);
+    return G.clamp(base - 0.8 * (day - 1) - 1.2 * (lv - 1) - 2.0 * zonesOpenCount(), 3.0, 20) * G.rand(0.75, 1.25);
   }
 
   function concurrentCap() {
     var lv = num(G.state && G.state.level, 1);
-    return Math.min(4 + lv, 12) + (lv >= 8 ? 2 : 0);
+    return G.clamp(4 + lv + 3 * zonesOpenCount(), 5, 20);
   }
 
   function hasStock() {
