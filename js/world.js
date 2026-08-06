@@ -308,8 +308,10 @@
   function tagTexture(state, product, price) {
     var key = state + '|' + (product ? product.id : '-');
     var hit = TAG_TEX[key];
-    // stocked 贴图上画了价格：同 pid 改价必须重绘。旧贴图当场 dispose 并删条目，
-    // 不留在缓存里堆积（setPrice 会把该 pid 的所有格位同步刷到新贴图，无悬挂引用）
+    // stocked 贴图上画了价格：同 pid 改价必须重绘。旧贴图当场 dispose 并删条目，不留在缓存里堆积。
+    // 前提：改价路径必须把该 pid 的所有格位同步刷到新贴图（setPrice 与 load 后的全量重刷都做到了）。
+    // 若某条路径漏刷，r128 不会渲染成黑——dispose() 只清 WebGLProperties，仍被引用的贴图下一帧会被
+    // 静默重新上传，症状是显示旧价且显存又漏一份，比黑图更难发现。
     if (hit && state === 'stocked' && hit._price !== price) {
       hit.dispose();
       tagTexDisposed++;

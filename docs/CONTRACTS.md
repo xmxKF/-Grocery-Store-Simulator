@@ -92,7 +92,7 @@ G.world.itemGeoFor(pid)   // -> BufferGeometry（品类基础形，T3 前恒为 
 G.world.itemMatFor(pid)   // -> Material（per-pid，T3 起含 labelBand 贴图）
 G.world.getStockCount(pid)
 G.world.spawnBox(pid, atPos /*可选 Vector3；省略走 activeYard 空位，满则返回 null*/)   // 生成纸箱实体 {mesh, productId, itemsLeft}，注册为可交互
-G.world.registerInteractable(obj3D, {type, data, prompt})   // type: 'box'|'shelfSlot'|'computer'|'register'|'trash'|'shutter'（shutter.data = {zone, price, lv, label}）
+G.world.registerInteractable(obj3D, {type, data, prompt})   // type: 'box'|'shelfSlot'|'computer'|'register'|'trash'|'shutter'（shutter.data = {zone, label}；价格/等级门槛不入 data，单一真相是 CONFIG.zonePrices/zoneLevels）
 G.world.interactables             // 供 player 射线检测（含 mesh 引用）
 G.world.colliders                 // [{minX,maxX,minZ,maxZ}] 供 player/顾客做 AABB 限制
 G.world.nav = { entry, exit, aisleSpots:[Vector3], registers /*= G.world.registers 同引用*/ }   // 旧 queueSpots/registerFront 已于 T3 删除
@@ -130,6 +130,7 @@ G.shop.buyZone(z) /*->bool 等级+金钱双校验*/
 G.shop.hireCashier(i) /*->bool Lv10、¥200*/  G.shop.fireCashier(i)
 G.shop.update(dt)                // 推进配送计时
 G.shop.isUnlocked(pid) /*->bool 等级+许可证*/
+G.shop.yardHasRoomFor(qty) /*->bool 卸货区容量判据的单一真相：院内箱数 + 在途队列 + qty <= CONFIG.maxBoxesInYard；orderBoxes 与订货面板的按钮禁用共用此函数*/
 ```
 
 ### G.customers（customers.js）
@@ -207,7 +208,10 @@ G.clamp(v, a, b)
 - 商品实例池：world.js 内部按 pid 维护 InstancedMesh（G.world._instPools 仅供自测），
   增删一律 rebuildProduct(pid) 全量重建；实例颜色一律走 per-pid 材质，不使用 instanceColor/setColorAt——不是能力缺失（本构建支持），而是架构必然：每个商品的 labelBand 贴图不同，材质本就必须 per-pid，instanceColor 只能合并同 (shape,accent) 组、收益不抵复杂度。
 - 上架飞行动画队列 `G.world._flights`（仅供自测）：`[{mesh, from, to, t0, slot, onDone, pid, idx}]`，`stepFlights` 自驱 rAF 消费。
-- `G.customers._test`：自测钩子（spawnOne 等），仅 ?selftest 使用。
+- `G.customers._test`：自测钩子（spawnOne / gait / addHand / remove），仅 ?selftest 使用。spawnOne 返回的对象带 `items` 与 `popItem`，便于验手持不变式。
+- `G.world._tagStats()`（仅供自测）：`{cache: TAG_TEX, disposed: 累计 dispose 次数}`，用于钉死价签贴图缓存不泄漏。
+- `G.player._test`（仅供自测）：`prompt(entry)` —— 不经 DOM 直接取某个交互体的提示文案。
+- **顾客手持渲染上限 6 件**（C-T7）：`addHandCube` 超过 6 件不再建 mesh，`popItem` 守不变式 `hands.children.length === min(items.length, 6)`。逻辑 `items` 不受影响（清单最多 6 条 ×2 件 = 12 件），结账金额与库存扣减照常。
 - lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js、world.js 与 customers.js 通过 G.tex.on 判断。
 - `belt.userData.belt`：world.js 打标（另带 `userData.registerId`）。C-T3 起 checkout 经 `G.world.registers[i].beltMesh` 直取自家台面，`userData.belt` 标记与 #4E5866 色值均不再承担 checkout 定位职责（色值红线仍在 DESIGN §5.4，属视觉契约）。
 - `userData.shell`：world.js 打标（10 处壳体）、main.js 自测 shellNoCast 断言消费——壳体绝不 castShadow 的硬标记。

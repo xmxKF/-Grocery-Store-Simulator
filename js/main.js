@@ -481,15 +481,23 @@
         if (shIt.type === 'shutter' && shIt.data.zone === 'B') shEntry = shIt;
       }
       var zpB = G.data.CONFIG.zonePrices.B, zlB = G.data.CONFIG.zoneLevels.B;
-      var shTxt = '';
+      var lvSnap = G.state.level, moneySnap = G.state.money;
+      var shLvTxt = '', shPriceTxt = '';
       G.data.CONFIG.zonePrices.B = 4242; G.data.CONFIG.zoneLevels.B = 9;
       try {
-        shTxt = shEntry ? String(G.player._test.prompt(shEntry)) : '(无卷帘门交互体)';
+        G.state.level = 1;
+        shLvTxt = shEntry ? String(G.player._test.prompt(shEntry)) : '(无卷帘门交互体)';
+        // 等级分支会提前 return，价格分支必须单独探一次：过等级门槛、钱不够
+        G.state.level = 9; G.state.money = 0;
+        shPriceTxt = shEntry ? String(G.player._test.prompt(shEntry)) : '(无卷帘门交互体)';
       } finally {
         G.data.CONFIG.zonePrices.B = zpB; G.data.CONFIG.zoneLevels.B = zlB;
+        G.state.level = lvSnap; G.state.money = moneySnap;
       }
-      ck('shop.shutterPriceSingleSource', shTxt.indexOf('Lv9') !== -1,
-        '把 CONFIG 的 B 区门槛改成 Lv9/4242 后，卷帘门提示 = ' + shTxt);
+      ck('shop.shutterPriceSingleSource',
+        shLvTxt.indexOf('Lv9') !== -1 && shPriceTxt.indexOf(G.fmt(4242)) !== -1,
+        '把 CONFIG 的 B 区门槛改成 Lv9/4242 后——等级分支「' + shLvTxt +
+        '」；价格分支「' + shPriceTxt + '」（应含 ' + G.fmt(4242) + '）');
 
       /* --- 订货 --- */
       var m0 = G.state.money;
@@ -1138,14 +1146,42 @@
       var ts = G.world._tagStats();
       var texCountAfter = 0, tk;
       for (tk in ts.cache) texCountAfter++;
-      ck('world.tagTexNoLeak', texCountAfter <= 72 && ts.disposed > 0,
-        '改价 200 次后缓存 ' + texCountAfter + '（≤72），disposed=' + ts.disposed);
+      // 上界 = 'empty|-' 1 条 + 24 个 pid 的 stocked/out 各一条 = 49，与价格无关
+      ck('world.tagTexNoLeak', texCountAfter <= 49 && ts.disposed > 0,
+        '改价 200 次后缓存 ' + texCountAfter + '（≤49），disposed=' + ts.disposed);
       G.shop.setPrice('f_noodle', 2.2);
       var capC = G.customers._test.spawnOne();
-      for (var hc = 0; hc < 12; hc++) G.customers._test.addHand(capC, 'f_noodle');
+      for (var hc = 0; hc < 12; hc++) {
+        capC.items.push({ pid: 'f_noodle', price: 2.2 });
+        G.customers._test.addHand(capC, 'f_noodle');
+      }
       var handMeshes = capC.hands.children.length;
       ck('cust.handVisualCap', handMeshes === 6, '12 件手持只渲染 ' + handMeshes + '（应 6）');
+      /* 清单上限 6 条 ×2 件 = 12 件，逻辑 items 会超过渲染封顶 6：popItem 必须守住
+         hands.length === min(items.length, 6)，否则玩家会看到「空手还在往传送带放货」 */
+      var popOk = true, popTrace = [];
+      while (capC.items.length) {
+        capC.popItem();
+        popTrace.push(capC.items.length + '/' + capC.hands.children.length);
+        if (capC.hands.children.length !== Math.min(capC.items.length, 6)) popOk = false;
+      }
+      ck('cust.handPopInvariant', popOk && capC.hands.children.length === 0,
+        'items/hands 逐步轨迹 ' + popTrace.join(' '));
       G.customers._test.remove(capC);
+
+      /* C-T7 修复轮：v1 迁移档的 shelves 恒为 null（state.js migrateV1），restoreShelves 整个不被调用，
+         而 prices 已被 sanePrices 换过——价签必须全量重刷，否则格位仍指着 _price 为旧价的共享贴图，
+         之后任意一次单格 addItem 都会把这张还在被引用的共享贴图 dispose 掉 */
+      var staleSlot = G.world.findSlotWithProduct('f_noodle');
+      localStorage.setItem('gss-save-v1', JSON.stringify({
+        money: 500, day: 3, xp: 200, level: 3, prices: { f_noodle: 4.5 },
+        licenses: ['食品', '饮料'], cashier: true, negDays: 0
+      }));
+      localStorage.removeItem('gss-save-v2');
+      var staleLoaded = G.load() === true;
+      var staleMap = staleSlot ? staleSlot.tagMesh.material.map : null;
+      ck('save.tagRefreshWithoutShelves', staleLoaded && !!staleMap && staleMap._price === 4.5,
+        '无 shelves 的档读档后，已有货格位的价签 _price=' + (staleMap ? staleMap._price : 'n/a') + '（应 4.5）');
 
       /* --- 性能总闸门（B-T7）：会脏化 state，必须放在存档往返之后 --- */
       function countDrawables(node) {

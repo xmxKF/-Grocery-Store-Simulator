@@ -211,6 +211,14 @@
       }
       if (G.world && G.world.restoreShelves && data.shelves) G.world.restoreShelves(data.shelves);
       if (G.world && G.world.restoreStorage && data.storage) G.world.restoreStorage(data.storage);
+      // prices 刚被 sanePrices 整体换过，而 shelves 可能整个缺席（v1 迁移档的 shelves 恒为 null）
+      // 或只覆盖部分格位——价签必须无条件全量重刷，否则未刷到的格位仍指着旧价的共享贴图
+      if (G.world && G.world.updateSlotTag) {
+        var rslots = G.world.slots || [];
+        for (var ri = 0; ri < rslots.length; ri++) G.world.updateSlotTag(rslots[ri]);
+      }
+      // prices 刚被 sanePrices 整体换过，而 shelves 可能整个缺席（v1 迁移档的 shelves 恒为 null）
+      // 或只覆盖部分格位——价签必须无条件全量重刷，否则未刷到的格位仍指着旧价的共享贴图
       // spec §7「首次 save 写 v2」：立刻落盘，否则玩家在首个日结前退出会被重复迁移，期间消费全丢
       if (migrated != null) G.save();
       return true;

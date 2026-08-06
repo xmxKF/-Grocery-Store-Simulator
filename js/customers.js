@@ -143,7 +143,9 @@
   function popItem() {
     if (!this.items.length) return null;
     var item = this.items.shift();
-    if (this.hands.children.length) this.hands.remove(this.hands.children[0]);
+    // 手持渲染封顶 6：不变式 hands.length === min(items.length, 6)。手上还满着 6 件而
+    // items 仍多于 6 时不能摘，否则会先空手、items 却还有剩（清单最多 6 条 ×2 件 = 12）
+    if (this.hands.children.length > this.items.length) this.hands.remove(this.hands.children[0]);
     layoutHands(this);
     return item;
   }
@@ -521,7 +523,8 @@
         var c = { mesh: body.group, hands: body.hands, phase: 0, amp: 0,
           legL: body.legL, legR: body.legR, armL: body.armL, armR: body.armR,
           torso: body.torso, head: body.head, hair: body.hair,
-          baseY: body.baseY, shirtMat: body.shirtMat, dims: body.dims };
+          baseY: body.baseY, shirtMat: body.shirtMat, dims: body.dims,
+          items: [], popItem: popItem };
         return c;
       },
       gait: function (c, dt, moving) { applyGait(c, dt, moving); },
