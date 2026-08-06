@@ -446,14 +446,10 @@
       }
       ck('nav.pathClear', clearOk, '路径各段不得穿 collider');
 
-      /* --- C-T3 多收银台 --- */
+      /* --- C-T3 多收银台 ---
+         checkout.perRegisterFrame / checkout.shortestQueue 需要三台同时在场，
+         已移到本文件末尾的全开块（checkout.threeRegisters 之后） */
       var regs = G.checkout._test.registers();
-      var f0 = G.checkout._test.frame(0);
-      ck('checkout.perRegisterFrame', regs.length >= 1 && !!f0 &&
-        Math.abs(f0.origin.x - G.world.registers[0].front.x) < 1.2 &&
-        Math.abs(f0.origin.z - 7.6) < 1.2,
-        'R1 frame.origin 必须落在自家柜台（' + (f0 && f0.origin.x.toFixed(2)) + ',' + (f0 && f0.origin.z.toFixed(2)) + '）');
-      ck('checkout.shortestQueue', typeof G.checkout.joinQueue === 'function', 'joinQueue 存在（多台分流逻辑生效）');
 
       /* GDD §7「每台 5 位」：front + queueSpots×4。假顾客灌满一台后立即标记 removed 让 prune 清走，
          不能留在队里干扰后面的 customer.queued */
@@ -478,8 +474,20 @@
 
       var shuttersAtBoot = G.world.interactables.filter(function (it) { return it.type === 'shutter'; }).length;
       var bzBefore = G.state.money;
-      ck('shop.buyZoneGates', G.shop.buyZone('B') === false && G.state.money === bzBefore,
-        'Lv1 买区域 B 必须被等级门槛拒绝且不扣钱');
+      var bzLevelReject = G.shop.buyZone('B') === false && G.state.money === bzBefore;
+      /* 「等级够、钱不够」分支此前从未被求值（spec §9 缺口）：临改 state 探一次，finally 还原 */
+      var bzLvSnap = G.state.level, bzMoneySnap = G.state.money, bzPoorReject = false;
+      try {
+        G.state.level = G.data.CONFIG.zoneLevels.B;
+        G.state.money = G.data.CONFIG.zonePrices.B - 1;
+        bzPoorReject = G.shop.buyZone('B') === false && G.state.zones.B === false &&
+          G.state.money === G.data.CONFIG.zonePrices.B - 1;
+      } finally {
+        G.state.level = bzLvSnap; G.state.money = bzMoneySnap;
+      }
+      ck('shop.buyZoneGates', bzLevelReject && bzPoorReject,
+        'Lv1 等级门槛拒绝且不扣钱 ' + bzLevelReject + '；Lv' + G.data.CONFIG.zoneLevels.B +
+        ' 但余额差 ¥1 时拒绝、不扣钱、不开区 ' + bzPoorReject);
 
       /* C-T7：卷帘门价格/等级单一真相在 CONFIG——提示文案若还读 SHUTTERS 表的副本，
          改 CONFIG 会「显示旧价、扣新价」。临时改 CONFIG 后提示必须跟着变 */
@@ -1312,6 +1320,117 @@
         G.world.registers.length === 3 && G.checkout._test.registers().length === 3 &&
         G.state.registers[1].owned === true && G.state.registers[2].owned === true,
         '世界台 ' + G.world.registers.length + ' / checkout 台 ' + G.checkout._test.registers().length);
+
+      /* C-final：以下四条 spec §9 明列，T3 写断言时脚本里只有一台，全是跨 task 盲区 */
+
+      ck('world.rackTable', G.world.slots.length === 120 && G.world.nav.aisleSpots.length === 20,
+        '全开态货架格位 ' + G.world.slots.length + '（16 组货架 + 4 台冷藏 = 20 组 × 6 格 = 120），走廊服务点 ' +
+        G.world.nav.aisleSpots.length + '（应 20）');
+
+      /* 传送带坐标系必须逐台缓存（spec 钉死债务 #1）：只验 frame(0) 的话，
+         退回 B 期的 beltFrame 单例缓存照样绿 */
+      var frames = [G.checkout._test.frame(0), G.checkout._test.frame(1), G.checkout._test.frame(2)];
+      var frOk = !!frames[0] && !!frames[1] && !!frames[2] &&
+        frames[0].origin.x !== frames[1].origin.x &&
+        frames[1].origin.x !== frames[2].origin.x &&
+        frames[0].origin.x !== frames[2].origin.x;
+      var frDetail = [];
+      for (var fri = 0; fri < 3; fri++) {
+        var frI = frames[fri], frFront = G.world.registers[fri].front;
+        if (!frI) { frOk = false; frDetail.push('#' + fri + ' 无 frame'); continue; }
+        if (Math.abs(frI.origin.x - frFront.x) > 1.2 || Math.abs(frI.origin.z - 7.6) > 1.2) frOk = false;
+        frDetail.push('#' + fri + ' origin.x=' + round2(frI.origin.x) + ' / front.x=' + frFront.x);
+      }
+      ck('checkout.perRegisterFrame', frOk,
+        '三台 frame.origin 必须互异且各自落在自家柜台：' + frDetail.join('，'));
+
+      /* CONTRACTS：joinQueue 在已建台中选 queue.length 最小者，并列取低 index。
+         此前只验了「函数存在」，最短队语义零覆盖 */
+      function fakeQueuer() {
+        return {
+          state: 'queueing', removed: false, queueTarget: null,
+          moveTo: function (t) { this.queueTarget = t; },
+          atDestination: function () { return false; }
+        };
+      }
+      function regIndexOf(c) {
+        var rl = G.checkout._test.registers();
+        for (var i = 0; i < rl.length; i++) if (rl[i].queue.indexOf(c) !== -1) return i;
+        return -1;
+      }
+      var sqTrace = [], sqCust = [];
+      for (var sqi = 0; sqi < 8; sqi++) {
+        var sqC = fakeQueuer();
+        if (!G.checkout.joinQueue(sqC)) { sqTrace.push('拒'); continue; }
+        sqCust.push(sqC);
+        sqTrace.push(regIndexOf(sqC));
+      }
+      var sqOk = sqTrace.join(',') === '0,1,2,0,1,2,0,1';
+      for (var sqj = 0; sqj < sqCust.length; sqj++) sqCust[sqj].removed = true;
+      G.checkout.update(0.05);   // prune 清走假顾客
+      var sqLeft = 0;
+      for (var sqk = 0; sqk < G.checkout._test.registers().length; sqk++) sqLeft += G.checkout._test.registers()[sqk].queue.length;
+      ck('checkout.shortestQueue', sqOk && sqLeft === 0,
+        '连续 8 人入队的落台轨迹 [' + sqTrace.join(',') + ']（应 0,1,2,0,1,2,0,1：并列取低 index），清理后残留 ' + sqLeft);
+
+      /* 同一时刻只能占一台（spec §9）：占着 R1 时 enter(R2) 必须被拒并提示 */
+      var toastOrig = G.ui.toast, toastSeen = [];
+      var mutexOk = false, mutexDetail = '';
+      try {
+        G.ui.toast = function (m) { toastSeen.push(String(m)); return toastOrig.apply(G.ui, arguments); };
+        G.checkout.enterRegister(G.world.registers[0]);
+        var mutexId1 = G.checkout.activeRegisterId;
+        G.checkout.enterRegister(G.world.registers[1]);
+        var mutexId2 = G.checkout.activeRegisterId;
+        var mutexToast = false;
+        for (var mti = 0; mti < toastSeen.length; mti++) {
+          if (toastSeen[mti].indexOf('先退出当前收银台') !== -1) mutexToast = true;
+        }
+        mutexOk = mutexId1 === 0 && mutexId2 === 0 && mutexToast;
+        mutexDetail = 'enter(R1) 后 activeRegisterId=' + mutexId1 + '，再 enter(R2) 后 ' + mutexId2 +
+          '（应仍 0），提示 ' + JSON.stringify(toastSeen);
+      } finally {
+        G.ui.toast = toastOrig;
+      }
+      G.checkout.exitRegister();
+      for (var mtj = 0; mtj < 20; mtj++) G.checkout.update(0.05);   // 回程过渡 300ms 走完才放开 inRegister
+      ck('checkout.enterAnyMutex', mutexOk && G.checkout.activeRegisterId === null && G.checkout.inRegister === false,
+        mutexDetail + '；退出后 activeRegisterId=' + G.checkout.activeRegisterId);
+
+      /* 雇员台与玩家台同帧各自推进 tx（spec §9）：R2 雇人、玩家占 R1 */
+      function fakePayer(n) {
+        var pitems = [];
+        for (var pi3 = 0; pi3 < n; pi3++) pitems.push({ pid: 'f_noodle', price: 2.2 });
+        return {
+          state: 'queueing', removed: false, queued: true, queueTarget: null, _items: pitems,
+          moveTo: function (t) { this.queueTarget = t; },
+          atDestination: function () { return true; },
+          popItem: function () { return this._items.length ? this._items.pop() : null; },
+          leaveStore: function () { this.state = 'leaving'; }
+        };
+      }
+      var staffedSnap = G.state.registers[1].staffed;
+      G.state.registers[1].staffed = true;
+      G.checkout.enterRegister(G.world.registers[0]);
+      var pcA = fakePayer(2), pcB = fakePayer(2);
+      G.checkout.joinQueue(pcA);   // 队列全空 → 取低 index → R1（玩家台）
+      G.checkout.joinQueue(pcB);   // → R2（雇员台）
+      for (var pti2 = 0; pti2 < 12; pti2++) G.checkout.update(0.05);
+      var txA = G.checkout._test.tx(0), txB = G.checkout._test.tx(1);
+      var ptBoth = !!txA && !!txB && txA !== txB && txA.c === pcA && txB.c === pcB &&
+        txA.items.length === 2 && txB.items.length === 2;
+      var ptItemsA = txA ? txA.items.length : 'n/a', ptItemsB = txB ? txB.items.length : 'n/a';
+      /* 雇员台 6 秒后自动成交；玩家台不自动，tx 必须原地不动 */
+      for (var ptj = 0; ptj < 160; ptj++) G.checkout.update(0.05);
+      var ptAuto = G.checkout._test.tx(1) === null && G.checkout._test.tx(0) === txA;
+      ck('checkout.parallelTx', ptBoth && ptAuto,
+        '同帧 0.6s 后：R1(玩家) 传送带 ' + ptItemsA + ' 件 / R2(雇员) ' + ptItemsB +
+        ' 件；再 8 秒后 R2 自动成交=' + (G.checkout._test.tx(1) === null) +
+        '，R1 仍在玩家手上=' + (G.checkout._test.tx(0) === txA));
+      pcA.removed = true; pcB.removed = true;
+      G.checkout.exitRegister();
+      for (var ptk = 0; ptk < 20; ptk++) G.checkout.update(0.05);
+      G.state.registers[1].staffed = staffedSnap;
 
       G.world.setCashierVisible(0, true);
       G.world.setCashierVisible(1, true);
