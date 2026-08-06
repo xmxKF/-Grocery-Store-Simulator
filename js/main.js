@@ -333,6 +333,12 @@
     document.title = pass ? 'SELFTEST:PASS' : 'SELFTEST:FAIL';
   }
 
+  /* 真实 draw call 天花板（主 pass + 阴影 pass 一帧合计）。与 perf.mainPassDrawables 的 760
+     是两个口径：760 数的是主 pass 可见对象数（spec §8 原意），这里数的是渲染器实际提交数。
+     C-终审满配实测 939（主 702 + 阴影 237，全场入镜机位）；天花板取 1050 =
+     主 pass 天花板 760 + 阴影 pass 余量 290，与 760 同步扩容。 */
+  var RENDER_CALL_CEILING = 1050;
+
   function withRandom(v, fn) {
     var orig = Math.random;
     Math.random = function () { return v; };
@@ -1244,6 +1250,20 @@
         for (var i = 0; i < node.children.length; i++) n += countDrawables(node.children[i]);
         return n;
       }
+      /* 闸门场景起手清场：不在仓库位/卸货位上的散落箱是前序断言的残留，与被测负载无关，
+         每只 2 drawable——留着会让将来增删断言时 drawable 无关漂移 */
+      var strayCleared = 0;
+      var strayList = G.world.allBoxes();
+      for (var sbx = 0; sbx < strayList.length; sbx++) {
+        var sBox = strayList[sbx], onSt = false;
+        for (var ssj = 0; ssj < G.world.storageSlots.length; ssj++) {
+          if (G.world.storageSlots[ssj].box === sBox) { onSt = true; break; }
+        }
+        if (onSt || G.world.isOnYard(sBox.mesh)) continue;
+        G.world.destroyBox(sBox);
+        strayCleared++;
+      }
+
       G.state.level = 10;
       G.state.licenses = ['食品', '饮料', '日用品', '生鲜'];
       G.world.buildZone('B');
@@ -1315,17 +1335,54 @@
       var slotsStocked = 0;
       for (var sfi = 0; sfi < G.world.slots.length; sfi++) if (G.world.slots[sfi].count > 0) slotsStocked++;
       var drawN = countDrawables(scene);
-      ck('perf.drawCallCeiling', drawN < 760,
-        '满配 drawable=' + drawN + '，天花板 760｜货架 ' + slotsStocked + '/' + G.world.slots.length +
-        ' 格有货、收银 3 台、仓库 ' + stFilled + ' 箱、卸货区 ' + yardTotal + ' 箱、测试顾客 20 名 + 在场 ' +
+      /* 口径 = 主 pass 可见对象数（自身与全部祖先 visible !== false 的 Mesh/InstancedMesh），
+         不含阴影 pass 的深度提交，也不等于 renderer 的真实 draw call 总数——
+         总提交另由 perf.renderCalls 守（DESIGN §5.8） */
+      ck('perf.mainPassDrawables', drawN < 760,
+        '满配主 pass 可见对象 ' + drawN + '，天花板 760（不含阴影 pass 提交）｜货架 ' +
+        slotsStocked + '/' + G.world.slots.length +
+        ' 格有货、收银 3 台、仓库 ' + stFilled + ' 箱、卸货区 ' + yardTotal + ' 箱、起手清掉散落箱 ' +
+        strayCleared + ' 只、测试顾客 20 名 + 在场 ' +
         G.customers.active.length + ' 名（每客塞 12 件手持，实渲染 ' + handRendered + '）');
+
+      /* C-final：场上箱实体总数硬上限（GDD §3 的 48）。地面囤箱脱离 12 位判据且跨天不清，
+         是闸门唯一的无界项——本条钉死 spawnBox 起手的总数校验。现场：仓库 24 + 卸货 12 */
+      var capBoxes = [], capBefore = G.world.allBoxes().length;
+      for (var cbi = 0; cbi < 20; cbi++) {
+        var cb = G.world.spawnBox('f_noodle', { x: 6 + (cbi % 5) * 0.6, z: -2.6 - Math.floor(cbi / 5) * 0.6 });
+        if (!cb) break;
+        capBoxes.push(cb);
+      }
+      var capTotal = G.world.allBoxes().length;
+      var capRejected = G.world.spawnBox('f_noodle', { x: 8, z: 2 });
+      ck('world.boxHardCap', capBefore === 36 && capTotal === 48 && capRejected === null,
+        '仓库 24 + 卸货 12 = ' + capBefore + ' 只，地面再塞 ' + capBoxes.length +
+        ' 只到总数 ' + capTotal + '（上限 48）后 spawnBox 必须返回 null，实返回 ' +
+        (capRejected === null ? 'null' : '箱'));
+      for (var cbj = 0; cbj < capBoxes.length; cbj++) G.world.destroyBox(capBoxes[cbj]);
 
       /* --- 渲染（无头环境可能没有 WebGL）--- */
       if (renderer) {
+        /* 真实提交数必须在「全场入镜」的机位下取：视锥剔除会让贴脸看墙的机位只提交
+           一两百次，测出来的数字不代表负载。自测到此结束，机位不必还原 */
+        camera.position.set(0, 34, 34);
+        camera.lookAt(0, 0, 0);
+        camera.updateMatrixWorld(true);
+        /* r128 的 render() 在 shadowMap.render() 之后才 info.reset()，默认 autoReset 下
+           读到的 calls 只含主 pass。关掉 autoReset 自己 reset，才拿得到含阴影 pass 的总提交 */
+        renderer.info.autoReset = false;
+        renderer.info.reset();
         render();
         ck('render', true, 'WebGL 渲染成功');
+        /* 真实提交数（主 pass + 阴影 pass）：countDrawables 只数主 pass 可见对象，
+           DESIGN §5.8 的总提交口径必须自己有断言，否则无人守 */
+        var rCalls = renderer.info.render.calls;
+        renderer.info.autoReset = true;
+        ck('perf.renderCalls', rCalls < RENDER_CALL_CEILING,
+          '满配一帧真实 draw call ' + rCalls + '（主 pass + 阴影 pass），天花板 ' + RENDER_CALL_CEILING);
       } else {
         ck('render', true, '无 WebGL（' + rendererNote + '）：已跳过渲染，游戏逻辑在无渲染下完整运行');
+        ck('perf.renderCalls', true, '无 WebGL：无法读 renderer.info.render.calls，跳过');
       }
     } catch (e) {
       runtimeErrors.push(String(e && e.stack || e));
