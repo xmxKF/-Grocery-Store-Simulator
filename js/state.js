@@ -100,7 +100,10 @@
         zones: G.state.zones,
         registers: G.state.registers,
         shelves: (G.world && G.world.serializeShelves) ? G.world.serializeShelves() : null,
-        storage: (G.world && G.world.serializeStorage) ? G.world.serializeStorage() : []
+        // boxes 是全部箱实体（仓库位/卸货区/店内地面/玩家手上）的单一真相，取代只存仓库位的
+        // storage；旧 v2 档没有 boxes 字段，load 会回落到 restoreStorage
+        boxes: (G.world && G.world.serializeBoxes) ? G.world.serializeBoxes() : [],
+        deliveries: (G.shop && G.shop.serializeDeliveries) ? G.shop.serializeDeliveries() : []
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) {
@@ -178,7 +181,10 @@
         data = migrateV1(JSON.parse(v1raw));
         migrated = data._refund;
       }
-      // 至此 parse/migrate 已成功；任何 G.state 赋值都不得早于这一行，否则坏档会把状态改成半截
+      // 至此 parse/migrate 已成功。以下的字段赋值一律在此行之后：坏档在 parse/migrate 阶段
+      // 失败时 G.state 一字未改。注意这个性质只覆盖到 parse/migrate——下面的 buildZone /
+      // restoreShelves / restoreBoxes / updateSlotTag / G.save 若抛异常，G.state 已是全量新档，
+      // 此时返回 false 会让玩家留在菜单却带着新档状态（见本函数末尾的世界重建 try 分段）
       G.state.money = (typeof data.money === 'number') ? data.money : G.data.CONFIG.startMoney;
       G.state.day = (typeof data.day === 'number') ? data.day : 1;
       G.state.xp = (typeof data.xp === 'number') ? data.xp : 0;
@@ -191,31 +197,47 @@
         : { A: true, B: false, C: false, W: false };
       G.state.registers = saneRegisters(data.registers);
       if (migrated != null) G.state._migrated = { refund: migrated };
-      // 顺序硬约束：先建区（W 的 storageSlots / B·C 的 R2R3 与货架）再恢复格位内容，
-      // restoreShelves/restoreStorage 靠 id 匹配已存在的格位，早一步就静默丢数据
-      if (G.world && G.world.syncLayout) {
-        if (G.state.zones.W && G.world.buildZone) G.world.buildZone('W');
-        if (G.state.zones.B && G.world.buildZone) G.world.buildZone('B');
-        if (G.state.zones.C && G.world.buildZone) G.world.buildZone('C');
-        G.world.syncLayout();
-      }
-      // owned 以世界实际建造为准（buildZone→buildRegister 会置位），杜绝坏档里的「有台无区」
-      if (G.world && G.world.registers) {
-        for (var i = 0; i < G.state.registers.length; i++) {
-          var built = false;
-          for (var j = 0; j < G.world.registers.length; j++) {
-            if (G.world.registers[j].index === i) built = true;
-          }
-          if (!built) G.state.registers[i].owned = false;
+      /* 世界重建段单独兜异常：此刻 G.state 已是全量新档，再返回 false 只会让玩家留在菜单
+         却带着新档状态（点「新游戏」就带半截状态开局）。这里只提示、不改返回值 */
+      try {
+        // 顺序硬约束：先建区（W 的 storageSlots / B·C 的 R2R3 与货架）再恢复格位内容，
+        // restoreShelves/restoreBoxes 靠 id 匹配已存在的格位，早一步就静默丢数据
+        if (G.world && G.world.syncLayout) {
+          if (G.state.zones.W && G.world.buildZone) G.world.buildZone('W');
+          if (G.state.zones.B && G.world.buildZone) G.world.buildZone('B');
+          if (G.state.zones.C && G.world.buildZone) G.world.buildZone('C');
+          G.world.syncLayout();
         }
-      }
-      if (G.world && G.world.restoreShelves && data.shelves) G.world.restoreShelves(data.shelves);
-      if (G.world && G.world.restoreStorage && data.storage) G.world.restoreStorage(data.storage);
-      // prices 刚被 sanePrices 整体换过，而 shelves 可能整个缺席（v1 迁移档的 shelves 恒为 null）
-      // 或只覆盖部分格位——价签必须无条件全量重刷，否则未刷到的格位仍指着旧价的共享贴图
-      if (G.world && G.world.updateSlotTag) {
-        var rslots = G.world.slots || [];
-        for (var ri = 0; ri < rslots.length; ri++) G.world.updateSlotTag(rslots[ri]);
+        // owned 以世界实际建造为准（buildZone→buildRegister 会置位），杜绝坏档里的「有台无区」；
+        // staffed 必须一并清掉，否则坏档「有员工无台」每天扣 ¥60、收银员不可见，
+        // 而解雇按钮只为 owned 的台出行，玩家无法自救
+        if (G.world && G.world.registers) {
+          for (var i = 0; i < G.state.registers.length; i++) {
+            var built = false;
+            for (var j = 0; j < G.world.registers.length; j++) {
+              if (G.world.registers[j].index === i) built = true;
+            }
+            if (!built) { G.state.registers[i].owned = false; G.state.registers[i].staffed = false; }
+          }
+        }
+        if (G.world && G.world.restoreShelves && data.shelves) G.world.restoreShelves(data.shelves);
+        // 箱实体：起手清场（销毁现有全部箱）再按序重建，杜绝重复箱与一箱两位。
+        // 旧 v2 档只有 storage 字段：清完场回落到仓库位恢复（地面/院内/手上的箱本就没存过）
+        if (G.world && G.world.restoreBoxes) {
+          G.world.restoreBoxes(Array.isArray(data.boxes) ? data.boxes : null);
+          if (!Array.isArray(data.boxes) && G.world.restoreStorage && data.storage) {
+            G.world.restoreStorage(data.storage);
+          }
+        }
+        if (G.shop && G.shop.restoreDeliveries) G.shop.restoreDeliveries(data.deliveries);
+        // prices 刚被 sanePrices 整体换过，而 shelves 可能整个缺席（v1 迁移档的 shelves 恒为 null）
+        // 或只覆盖部分格位——价签必须无条件全量重刷，否则未刷到的格位仍指着旧价的共享贴图
+        if (G.world && G.world.updateSlotTag) {
+          var rslots = G.world.slots || [];
+          for (var ri = 0; ri < rslots.length; ri++) G.world.updateSlotTag(rslots[ri]);
+        }
+      } catch (we) {
+        if (G.ui && G.ui.toast) G.ui.toast('存档世界重建出错，部分内容可能缺失', 'danger');
       }
       // spec §7「首次 save 写 v2」：立刻落盘，否则玩家在首个日结前退出会被重复迁移，期间消费全丢
       if (migrated != null) G.save();

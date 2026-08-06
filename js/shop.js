@@ -97,6 +97,31 @@
     deliveryQueue = remaining;
   }
 
+  /* 在途订单已经扣过款（orderBoxes 先 addMoney 再入队），不入档就是刷新即永久丢失，
+     与 GDD §3「已付的钱不退、箱子不消失」冲突。qty 恒为 1（一条 = 一只箱），
+     字段保留是为了让存档格式描述与 orderBoxes 的购物车口径一致 */
+  function serializeDeliveries() {
+    var out = [];
+    for (var i = 0; i < deliveryQueue.length; i++) {
+      out.push({ pid: deliveryQueue[i].pid, qty: 1, remaining: deliveryQueue[i].remaining });
+    }
+    return out;
+  }
+
+  function restoreDeliveries(data) {
+    deliveryQueue = [];
+    yardFullToasted = false;
+    if (!Array.isArray(data)) return;
+    for (var i = 0; i < data.length; i++) {
+      var d = data[i];
+      if (!d || !G.data.productById(d.pid)) continue;
+      var qty = (typeof d.qty === 'number' && d.qty > 0) ? Math.floor(d.qty) : 1;
+      var rem = (typeof d.remaining === 'number' && isFinite(d.remaining))
+        ? d.remaining : G.data.CONFIG.deliverySec;
+      for (var k = 0; k < qty; k++) deliveryQueue.push({ pid: d.pid, remaining: rem + k * 0.4 });
+    }
+  }
+
   function setPrice(pid, price) {
     var p = G.data.productById(pid);
     if (!p) return false;
@@ -168,6 +193,8 @@
   G.shop = {
     orderBoxes: orderBoxes,
     yardHasRoomFor: yardHasRoomFor,
+    serializeDeliveries: serializeDeliveries,
+    restoreDeliveries: restoreDeliveries,
     update: update,
     setPrice: setPrice,
     buyLicense: buyLicense,

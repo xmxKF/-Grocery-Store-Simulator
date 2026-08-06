@@ -782,13 +782,9 @@
     box.mesh.position.set(slot.pos.x, 0.225, slot.pos.z);
     box.mesh.rotation.set(0, 0, 0);
     // 重新注册为可交互箱（玩家举起时已被 removeInteractable；放回存储位即恢复）。
-    // 先 retire 一次保证「一 mesh 一交互体」：玩家路径下是空转，直接调 API 存箱时防重复登记。
-    retireInteractable(box.mesh);
-    var prod = G.data.productById(box.productId);
-    registerInteractable(box.mesh, {
-      type: 'box', data: { box: box },
-      prompt: '[E] 搬起纸箱（' + (prod ? prod.name : box.productId) + ' ×' + box.itemsLeft + '）'
-    });
+    // registerBoxInteractable 起手 retire 一次保证「一 mesh 一交互体」：玩家路径下是空转，
+    // 直接调 API 存箱时防重复登记。
+    registerBoxInteractable(box);
     return true;
   }
 
@@ -1165,10 +1161,62 @@
     return null;   // 满：调用方（shop 送达）改排队重试，绝不叠箱
   }
 
+  /* 场上纸箱实体的总数硬上限：24（仓库位）+ 12（卸货位）+ 12（搬运中/地面囤积的余量）。
+     地面箱脱离一切位数判据且跨天不清，是 perf 闸门唯一的无界项——达上限时配送车在门外
+     等待（复用 shop.update 的延迟送达链路），见 GDD §3。 */
+  var BOX_HARD_CAP = 48;
+
+  /* 箱实体归属的单一枚举：交互体表里的箱 + 玩家手上那只（举箱时交互体被摘除）。
+     总数上限、序列化、清场三处共用，避免各自在四处判据里打补丁 */
+  function allBoxes() {
+    var out = [];
+    for (var i = 0; i < interactables.length; i++) {
+      var it = interactables[i];
+      if (it.type === 'box' && it.data && it.data.box) out.push(it.data.box);
+    }
+    var held = (G.player && G.player.carrying) || null;
+    if (held && out.indexOf(held) === -1) out.push(held);
+    return out;
+  }
+
+  function storageSlotOf(box) {
+    for (var i = 0; i < storageSlots.length; i++) {
+      if (storageSlots[i].box === box) return storageSlots[i];
+    }
+    return null;
+  }
+
+  /* 箱交互体的唯一登记入口：提示带当前剩余件数，并保证「一 mesh 一交互体」 */
+  function registerBoxInteractable(box) {
+    var prod = G.data.productById(box.productId);
+    retireInteractable(box.mesh);
+    registerInteractable(box.mesh, {
+      type: 'box', data: { box: box },
+      prompt: '[E] 搬起纸箱（' + (prod ? prod.name : box.productId) + ' ×' + box.itemsLeft + '）'
+    });
+  }
+
+  /* 彻底销毁一只箱：交互体 + 场景挂载 + 自有几何/材质（贴图是共享缓存，不 dispose） */
+  function destroyBox(box) {
+    if (!box || !box.mesh) return;
+    var slot = storageSlotOf(box);
+    if (slot) slot.box = null;
+    retireInteractable(box.mesh);
+    if (box.mesh.parent) box.mesh.parent.remove(box.mesh);
+    var parts = [box.body, box.label];
+    for (var i = 0; i < parts.length; i++) {
+      if (!parts[i]) continue;
+      if (parts[i].geometry) parts[i].geometry.dispose();
+      if (parts[i].material) parts[i].material.dispose();
+    }
+    if (G.player && G.player.carrying === box) G.player.carrying = null;
+  }
+
   /* atPos 指定落点（存档回填存储位）；不指定则找空箱位，卸货区已满返回 null */
   function spawnBox(pid, atPos) {
     var product = G.data.productById(pid);
     if (!product) return null;
+    if (allBoxes().length >= BOX_HARD_CAP) return null;
     var slotPos = atPos || freeYardSlot();
     if (!slotPos) return null;
 
@@ -1186,8 +1234,67 @@
     sceneRef.add(group);
 
     var box = { mesh: group, body: body, label: label, productId: pid, itemsLeft: product.boxSize };
-    registerInteractable(group, { type: 'box', data: { box: box }, prompt: '[E] 搬起纸箱（' + product.name + ' ×' + product.boxSize + '）' });
+    registerBoxInteractable(box);
     return box;
+  }
+
+  /* 全部箱实体的统一序列化（GDD §3「已付的钱不退、箱子不消失」）：
+     仓库位 / 卸货区 / 店内地面 / 玩家手上四类都必须入档，只存仓库位会让玩家看到
+     「仓库里的活下来了、地上的没了」这种更困惑的不一致。
+     手上那只按「脚下位置的地面箱」存：读档后玩家从菜单重新进场，手上凭空多一只箱
+     会与 carrying 的交互态（提示/放下/丢弃/上架）错位。 */
+  function serializeBoxes() {
+    var out = [], list = allBoxes();
+    var held = (G.player && G.player.carrying) || null;
+    var pose = (held && G.player.getPose) ? G.player.getPose() : null;
+    for (var i = 0; i < list.length; i++) {
+      var box = list[i], slot = storageSlotOf(box);
+      if (slot) {
+        out.push({ pid: box.productId, left: box.itemsLeft, where: 'storage', slotId: slot.id });
+        continue;
+      }
+      var x = box.mesh.position.x, z = box.mesh.position.z;
+      var where = isOnYard(box.mesh) ? 'yard' : 'floor';
+      if (box === held) {
+        where = 'floor';
+        if (pose) { x = pose.x; z = pose.z; }
+      }
+      out.push({ pid: box.productId, left: box.itemsLeft, where: where, x: x, z: z });
+    }
+    return out;
+  }
+
+  /* 起手清场再按序重建：重复 load 不得产生重复箱或「一箱两位」。
+     data 非数组（旧 v2 档无 boxes 字段）时只清场，由调用方回落 restoreStorage */
+  function restoreBoxes(data) {
+    var live = allBoxes();
+    for (var i = 0; i < live.length; i++) destroyBox(live[i]);
+    if (!Array.isArray(data)) return;
+    for (var d = 0; d < data.length; d++) {
+      var rec = data[d];
+      if (!rec || !G.data.productById(rec.pid)) continue;
+      var left = (typeof rec.left === 'number' && isFinite(rec.left)) ? rec.left : 0;
+      var box = null;
+      if (rec.where === 'storage') {
+        var slot = null;
+        for (var j = 0; j < storageSlots.length; j++) {
+          if (storageSlots[j].id === rec.slotId) { slot = storageSlots[j]; break; }
+        }
+        if (!slot || slot.box) continue;
+        box = spawnBox(rec.pid, slot.pos);
+        if (!box) continue;
+        box.itemsLeft = left;
+        updateBoxVisual(box);
+        storeBox(slot, box);   // 重新登记交互提示里的剩余件数
+        continue;
+      }
+      var at = { x: (typeof rec.x === 'number') ? rec.x : 0, z: (typeof rec.z === 'number') ? rec.z : 0 };
+      box = spawnBox(rec.pid, at);
+      if (!box) continue;
+      box.itemsLeft = left;
+      updateBoxVisual(box);
+      registerBoxInteractable(box);
+    }
   }
 
   // ---------------------------------------------------------------
@@ -1246,6 +1353,11 @@
     restoreShelves: restoreShelves,
     serializeStorage: serializeStorage,
     restoreStorage: restoreStorage,
+    allBoxes: allBoxes,
+    destroyBox: destroyBox,
+    serializeBoxes: serializeBoxes,
+    restoreBoxes: restoreBoxes,
+    WALL_H: WALL_H,
     syncLayout: syncLayout,
     setCashierVisible: setCashierVisible,
     itemGeoFor: itemGeoFor,

@@ -1141,6 +1141,60 @@
         return rr.zones.W === true;
       })(), 'zones 入档往返');
 
+      /* --- C-final：已付款库存必须入档（GDD §3「已付的钱不退、箱子不消失」）---
+         此前 v2 只序列化 storageSlots，卸货区/店内地面/手上的箱与已扣款的在途订单
+         刷新即永久丢失。三类箱各一只 + 一笔在途订单走真往返 */
+      function boxCensus() {
+        var out = { storage: [], yard: [], floor: [] };
+        var list = G.world.allBoxes();
+        for (var bi = 0; bi < list.length; bi++) {
+          var b = list[bi], onSt = null;
+          for (var sj = 0; sj < G.world.storageSlots.length; sj++) {
+            if (G.world.storageSlots[sj].box === b) { onSt = G.world.storageSlots[sj]; break; }
+          }
+          if (onSt) out.storage.push(b);
+          else if (G.world.isOnYard(b.mesh)) out.yard.push(b);
+          else out.floor.push(b);
+        }
+        return out;
+      }
+      var bxSlot = G.world.storageSlots[5];
+      var bxStore = G.world.spawnBox('f_noodle', bxSlot.pos);
+      if (bxStore) { bxStore.itemsLeft = 9; G.world.storeBox(bxSlot, bxStore); }
+      var bxYard = G.world.spawnBox('d_water');            // 无参 = 卸货区空位
+      if (bxYard) { bxYard.itemsLeft = 5; G.world.updateBoxVisual(bxYard); }
+      var bxFloor = G.world.spawnBox('h_tissue', { x: 6.5, z: 2.4 });   // 店内地面（按 Q 放下的那类）
+      if (bxFloor) { bxFloor.itemsLeft = 3; G.world.updateBoxVisual(bxFloor); }
+      var bxOrdered = G.shop.orderBoxes([{ pid: 'f_noodle', qty: 1 }]);   // 已扣款、在途
+      var bxBefore = boxCensus(), dqBefore = G.shop.serializeDeliveries();
+      G.save();
+      var bxLoaded = G.load();
+      var bxAfter = boxCensus(), dqAfter = G.shop.serializeDeliveries();
+      var bxCounts = bxAfter.storage.length === 1 && bxAfter.yard.length === 1 && bxAfter.floor.length === 1;
+      var bxOk = bxLoaded === true && bxOrdered === true && bxCounts &&
+        bxAfter.storage[0].productId === 'f_noodle' && bxAfter.storage[0].itemsLeft === 9 &&
+        bxSlot.box === bxAfter.storage[0] &&
+        bxAfter.yard[0].productId === 'd_water' && bxAfter.yard[0].itemsLeft === 5 &&
+        bxAfter.floor[0].productId === 'h_tissue' && bxAfter.floor[0].itemsLeft === 3 &&
+        Math.abs(bxAfter.floor[0].mesh.position.x - 6.5) < 0.01 &&
+        bxAfter.storage[0] !== bxBefore.storage[0] &&   // 真重建，不是原对象留在场上
+        dqBefore.length === 1 && dqAfter.length === 1 && dqAfter[0].pid === 'f_noodle' &&
+        Math.abs(dqAfter[0].remaining - dqBefore[0].remaining) < 0.01;
+      ck('save.boxesRoundtrip', bxOk,
+        '仓库/卸货/地面各 1 箱 + 在途 1 单往返：存 ' +
+        JSON.stringify({ st: bxBefore.storage.length, yard: bxBefore.yard.length, floor: bxBefore.floor.length, dq: dqBefore.length }) +
+        ' → 读 ' + JSON.stringify({ st: bxAfter.storage.length, yard: bxAfter.yard.length, floor: bxAfter.floor.length, dq: dqAfter.length }) +
+        '，left ' + JSON.stringify(bxAfter.storage.concat(bxAfter.yard, bxAfter.floor).map(function (b) { return b.productId + ':' + b.itemsLeft; })));
+
+      G.load(); G.load();   // 重复读档不得叠箱（restoreBoxes 起手清场）
+      var bxDup = boxCensus(), dqDup = G.shop.serializeDeliveries();
+      ck('save.boxesNoDup',
+        bxDup.storage.length === 1 && bxDup.yard.length === 1 && bxDup.floor.length === 1 &&
+        G.world.allBoxes().length === 3 && dqDup.length === 1,
+        '连读 3 次后场上箱 ' + G.world.allBoxes().length + ' 只（应 3）' +
+        JSON.stringify({ st: bxDup.storage.length, yard: bxDup.yard.length, floor: bxDup.floor.length }) +
+        '，在途 ' + dqDup.length + ' 单');
+
       /* --- C-T7 治漏与上限 --- */
       for (var pi2 = 0; pi2 < 200; pi2++) G.shop.setPrice('f_noodle', 2.0 + (pi2 % 30) * 0.1);
       var ts = G.world._tagStats();

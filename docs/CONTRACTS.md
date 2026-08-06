@@ -56,15 +56,20 @@ API：
 G.addMoney(delta, reason)   // 更新+emit('money')；不做负数校验之外的魔法
 G.addXP(n)                  // 处理升级，emit('xp'/'levelup')
 G.save(); G.load() /*->bool*/; G.resetSave()
-// save() 内部调用 G.world.serializeShelves()/serializeStorage()；load() 先按 zones 建区，再 restoreShelves/restoreStorage
+// save() 内部调用 G.world.serializeShelves()/serializeBoxes() 与 G.shop.serializeDeliveries()；
+// load() 先按 zones 建区，再 restoreShelves/restoreBoxes/restoreDeliveries
 ```
 存档结构 `gss-save-v2`（照录）：
 ```js
 { v:2, money, day, xp, level, prices, licenses, negDays,
   zones:{A:true,B:false,C:false,W:false},
   registers:[{owned,staffed}×3],
-  shelves:[{id,productId,count}], storage:[{id,pid,left}] }
+  shelves:[{id,productId,count}],
+  boxes:[{pid,left,where:'storage'|'yard'|'floor',slotId?,x?,z?}],
+  deliveries:[{pid,qty,remaining}] }
 ```
+- `boxes` 是全部箱实体（仓库位 / 卸货区 / 店内地面 / 玩家手上）的单一真相；手上那只按玩家脚下位置存为 `'floor'`。`deliveries` 是已扣款的在途订单。二者与 `shelves` 共同兑现 GDD §3「已付的钱不退、箱子不消失」。
+- **旧 v2 档兼容**：C 期终审前的 v2 只有 `storage:[{id,pid,left}]`（仅仓库位）。`load()` 见不到 `boxes` 时清场后回落 `restoreStorage(data.storage)`；新写的档不再含 `storage`。
 - 读取分流：优先 `gss-save-v2`；无则读 `gss-save-v1` → `migrateV1`：继承 money/day/xp/level/prices/licenses/negDays；`cashier → registers[0].staffed`；zones 全锁（仅 A）；shelves 不继承 → 按进价全额折现入 money；首次 save 写 v2；**v1 键保留不删**。
 - `resetSave()`：**双键清除**（`gss-save-v1` 与 `gss-save-v2` 一并删除）。
 
@@ -103,7 +108,11 @@ G.world.storageSlots // [{id:'st0'..'st23', pos:Vector3, marker:Mesh, box:null|�
 G.world.storeBox(slot, box) /*->bool*/  G.world.takeBox(slot) /*->box|null*/   // C-T4
 // takeBox 只解绑不搬箱（mesh 留在原位），调用方负责重新定位；storeBox 起手先解绑该箱的旧位，杜绝「一箱两位」
 G.world.releaseStorageOf(box)   // C-T4；按 box 反查并清空所占存储位（玩家直接搬起存储位上的箱时由 player 调用）
-G.world.serializeStorage() /*->[{id,pid,left}]*/  G.world.restoreStorage(data)   // C-T4；restore 靠 slot.id 匹配，必须在 buildZone('W') 之后调用
+G.world.serializeStorage() /*->[{id,pid,left}]*/  G.world.restoreStorage(data)   // C-T4；restore 靠 slot.id 匹配，必须在 buildZone('W') 之后调用；存档已改走 serializeBoxes，此对仅供旧 v2 档回落与自测
+G.world.allBoxes() /*->[box]*/   // C-终审；场上全部箱实体 = 交互体表里的箱 + G.player.carrying（举箱时交互体被摘除）；总数上限/序列化/清场的单一枚举
+G.world.destroyBox(box)          // C-终审；销毁一只箱（清存储位 + 摘交互体 + 出场景 + dispose 自有几何材质）
+G.world.serializeBoxes() /*->[{pid,left,where:'storage'|'yard'|'floor',slotId?,x?,z?}]*/  G.world.restoreBoxes(data)   // C-终审；restore 起手清场再重建，data 非数组时只清场；必须在 buildZone('W') 之后调用
+G.world.WALL_H                   // 3.6；断言与文档的墙高单一真相（shadow.frustumCovers 采样高度读它）
 G.world.buildZone(z /*'B'|'C'|'W'*/)   // C-T1；幂等；自置位 zones[z]+开门+除collider+启用节点+建造该区设施
 G.world.zoneOf(x, z) /*->'core'|'A'|'B'|'C'|'W'|null*/   // C-T2；点落在哪个区域矩形（core 优先），findPath 目的地闸消费
 G.world.isOnYard(mesh) /*->bool*/   // C-T4；箱 mesh 是否停在当前生效卸货区的 12 个位上（0.3m 判据）
@@ -139,6 +148,7 @@ G.shop.hireCashier(i) /*->bool Lv10、¥200*/  G.shop.fireCashier(i)
 G.shop.update(dt)                // 推进配送计时
 G.shop.isUnlocked(pid) /*->bool 等级+许可证*/
 G.shop.yardHasRoomFor(qty) /*->bool 卸货区容量判据的单一真相：院内箱数 + 在途队列 + qty <= CONFIG.maxBoxesInYard；orderBoxes 与订货面板的按钮禁用共用此函数*/
+G.shop.serializeDeliveries() /*->[{pid,qty,remaining}]*/  G.shop.restoreDeliveries(data)   // C-终审；在途订单已扣款，必须入档（GDD §3）；restore 起手清空现有队列
 ```
 
 ### G.customers（customers.js）
