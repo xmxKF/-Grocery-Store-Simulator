@@ -792,7 +792,7 @@
     if (!slot || slot.box || !box || !box.mesh) return false;
     releaseStorageOf(box);   // 同一箱可能已占别位（直调 API 的读档/测试路径）：先解绑，杜绝「一箱两位」
     slot.box = box;
-    box.mesh.position.set(slot.pos.x, 0.225, slot.pos.z);
+    box.mesh.position.set(slot.pos.x, boxHalf(), slot.pos.z);
     box.mesh.rotation.set(0, 0, 0);
     // slotted 锁死为静态刚体：休眠动态体被撞醒会离开存储位而 slot.box 仍指着它
     if (G.physics) { G.physics.detach(box); G.physics.attachStatic(box); }
@@ -1215,6 +1215,14 @@
     return null;
   }
 
+  /* 箱的落位高度 = 半边长，唯一真相源在 physics.js（BOX_HALF）。现取不缓存：
+     physics.js 虽先于 world.js 加载，但缓存一份拷贝会在该常量改动时让落位高度
+     静默停在旧值，而 mesh 与刚体的半边长是同一个数（physics.js「几何与物理零偏移」）。
+     physics 缺席（无 CANNON 也会定义 G.physics，此处纯属兜底）时回落 0.225。 */
+  function boxHalf() {
+    return (G.physics && typeof G.physics.BOX_HALF === 'number') ? G.physics.BOX_HALF : 0.225;
+  }
+
   /* 箱交互体的唯一登记入口：提示带当前剩余件数，并保证「一 mesh 一交互体」 */
   function registerBoxInteractable(box) {
     var prod = G.data.productById(box.productId);
@@ -1255,7 +1263,7 @@
 
     // 子件用局部坐标（原点=箱心），整箱位置只由 group.position 决定，玩家举箱时才能整体跟随相机
     var group = new THREE.Group();
-    group.position.set(slotPos.x, 0.225, slotPos.z);
+    group.position.set(slotPos.x, boxHalf(), slotPos.z);
     var body = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.45),
       flatMat(0xC08B4E, G.tex.on ? { map: G.tex.cardboard(1, 1) } : null));
     body.castShadow = body.receiveShadow = !!(G.tex && G.tex.on);
@@ -1291,7 +1299,9 @@
          飞行中的箱天然走同一条规则，不需要任何特判。 */
       var ry = euler.setFromQuaternion(box.mesh.quaternion, 'YXZ').y;
       if (slot) {
-        out.push({ pid: box.productId, left: box.itemsLeft, where: 'storage', slotId: slot.id, ry: ry });
+        /* storage 记录不带 ry：storeBox 无条件 rotation.set(0,0,0)，写出来恒为字面 0，
+           一个 bit 信息都不带；读侧对缺失 ry 已降级为 0，加不加该字段的迁移成本相同。 */
+        out.push({ pid: box.productId, left: box.itemsLeft, where: 'storage', slotId: slot.id });
         continue;
       }
       var x = box.mesh.position.x, z = box.mesh.position.z;

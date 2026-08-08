@@ -869,8 +869,8 @@
          关闭的卷帘门静态体只到 h=3.0，其上到 WALL_H 的空当由天花板 plane 压住。
          空当 ≥ 箱边长 0.45 就能隔着关门往未购区域扔箱（CEIL_Y ≥ 3.45 即开洞）。当前
          WALL_H=3.6 下 ceilingCaps 恰好也在 3.45 跟着红，纯属巧合——WALL_H 一抬它就放宽，
-         而本条不动（详见 js/physics.js CEIL_Y 注释）。0.45 = 纸箱 BoxGeometry 边长，
-         physics 未导出 BOX_HALF，为这一处扩契约不值，故用字面量。 */
+         而本条不动（详见 js/physics.js CEIL_Y 注释）。箱边长读 G.physics.BOX_HALF × 2，
+         不抄字面量 0.45。 */
       /* 取【最矮】那扇门：空当 = CEIL_Y − 门顶，门越矮空当越大、exploit 越真，取 max
          是往宽松方向错。当前每扇门都被 colliderHeights 钉死在 3.0 故 min/max 同值，但
          本条断言的正确性不该隐式挂在另一条断言上。找不到门时回落 0，交给 gateH > 0
@@ -881,10 +881,11 @@
         if (gc.zoneGate && typeof gc.h === 'number' && gc.h < gateH) gateH = gc.h;
       }
       if (gateH === Infinity) gateH = 0;
+      var gateEdge = G.physics ? G.physics.BOX_HALF * 2 : 0.45;
       ck('physics.ceilingSealsZoneGates',
-        !!G.physics && gateH > 0 && (G.physics.CEIL_Y - gateH) < 0.45,
+        !!G.physics && gateH > 0 && (G.physics.CEIL_Y - gateH) < gateEdge,
         '门顶 ' + gateH + ' → 天花板 ' + (G.physics ? G.physics.CEIL_Y : '?') + '，空当 ' +
-        round2((G.physics ? G.physics.CEIL_Y : 99) - gateH) + 'm，须 < 箱边长 0.45');
+        round2((G.physics ? G.physics.CEIL_Y : 99) - gateH) + 'm，须 < 箱边长 ' + gateEdge);
 
       /* --- D-T2 箱三态与刚体生命周期（spec §3.4 / §5）--- */
       var stSlotP = null;

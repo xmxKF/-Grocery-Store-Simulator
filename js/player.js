@@ -727,7 +727,8 @@
     var carrying = G.player.carrying;
     if (!carrying) return;
     var mesh = carrying.mesh;
-    mesh.position.set(pos.x, 0.225, pos.z);
+    // 落位高度 = 箱半边长，读 physics 的单一真相源；抄一份 0.225 会在该常量改动时静默错位
+    mesh.position.set(pos.x, (G.physics && G.physics.BOX_HALF) || 0.225, pos.z);
     mesh.rotation.set(0, yaw, 0);
 
     if (G.world && G.world.registerInteractable) {

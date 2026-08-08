@@ -71,7 +71,7 @@ G.save(); G.load() /*->bool*/; G.resetSave()
   zones:{A:true,B:false,C:false,W:false},
   registers:[{owned,staffed}×3],
   shelves:[{id,productId,count}],
-  boxes:[{pid,left,where:'storage'|'yard'|'floor',slotId?,x?,z?}],
+  boxes:[{pid,left,where:'storage'|'yard'|'floor',slotId?,x?,z?,ry?}],
   deliveries:[{pid,qty,remaining}] }
 ```
 - `boxes` 是全部箱实体（仓库位 / 卸货区 / 店内地面 / 玩家手上）的单一真相；手上那只按玩家脚下位置存为 `'floor'`。`deliveries` 是已扣款的在途订单。二者与 `shelves` 共同兑现 GDD §3「已付的钱不退、箱子不消失」。
@@ -150,6 +150,7 @@ G.world.destroyBox(box)          // C-终审；销毁一只箱（清存储位 + 
 G.world.registerBoxInteractable(box)   // D 期导出；箱交互体的唯一登记入口（起手 retire 一次，保证「一 mesh 一交互体」），投掷松手时由 player.releaseThrow 调用
 G.world.serializeBoxes() /*->[{pid,left,where:'storage'|'yard'|'floor',slotId?,x?,z?,ry?}]*/  G.world.restoreBoxes(data)   // C-终审；restore 起手清场再重建，data 非数组时只清场；必须在 buildZone('W') 之后调用
 // ry（D 期）：绕 Y 的偏航（弧度）。所有箱一律按「落地平放」口径存档——y 恒 0.225 不入档，俯仰与翻滚丢弃。旧档无 ry 视为 0，v:2 不变更。
+// ry 只出现在 where='yard'|'floor' 的记录上；`storage` 记录**不带 ry**——storeBox 无条件 rotation.set(0,0,0)，写进去也恒为字面 0，不带一个 bit 的信息（D-T7 删除）。
 G.world.WALL_H                   // 3.6；断言与文档的墙高单一真相（shadow.frustumCovers 采样高度读它）
 G.world.buildZone(z /*'B'|'C'|'W'*/)   // C-T1；幂等；自置位 zones[z]+开门+除collider+启用节点+建造该区设施
 G.world.zoneOf(x, z) /*->'core'|'A'|'B'|'C'|'W'|null*/   // C-T2；点落在哪个区域矩形（core 优先），findPath 目的地闸消费
