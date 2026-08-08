@@ -1212,6 +1212,32 @@
       if (dBox2) G.world.destroyBox(dBox2);
       G.customers._test.remove(dc);
 
+      /* 上面两条都摸不到 stepCustomer：dodgeLooseBox 走 _test.stepAvoid 隔离单元，
+         dodgeNoNavChange 是否定式，ragdollFreezesGait 只能证明「若被调用则须被 ragdoll 挡住」
+         ——把 stepCustomer 里的 stepAvoid 调用整行删掉，三条照样全绿。本条堵这个洞：
+         箱钉在世界坐标固定点，全程只走 _test.stepOne（含 stepMove 的回拽），
+         阈值取 0.20 是因为真实路径下 stepMove 会把峰值从 0.6 压到 0.36–0.46（1.8× 余量）。 */
+      var ic = G.customers._test.spawnOne();
+      ic.mesh.position.set(6.0, 0, -6.0);
+      ic.mesh.rotation.y = 0;
+      ic.lane = 0;
+      ic.path = [new THREE.Vector3(6.0, 0, 0.0), new THREE.Vector3(6.0, 0, 6.0)];
+      var iBox = G.world.spawnBox('f_noodle', { x: 6.0, z: -4.0 });
+      var iPeak = 0;
+      if (iBox) {
+        for (var ifi = 0; ifi < 90; ifi++) {              // 1.5s
+          G.customers._test.stepOne(ic, 1 / 60);
+          var iOff = Math.abs(ic.mesh.position.x - 6.0);
+          if (iOff > iPeak) iPeak = iOff;
+        }
+      }
+      ck('cust.dodgeInStepCustomer', iPeak >= 0.20,
+        '走 stepCustomer 每帧主循环（非 _test.stepAvoid 隔离单元）：固定箱 z=-4.0，' +
+        '1.5s 内侧移峰值 ' + round2(iPeak) + 'm（应 ≥0.20）');
+      if (iBox) G.world.destroyBox(iBox);
+      G.customers._test.remove(ic);
+
+
 
       G.customers._test.remove(kc);
       G.customers._test.remove(sc2);

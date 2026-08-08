@@ -296,6 +296,8 @@
         var path = (G.world.nav && G.world.nav.findPath)
           ? G.world.nav.findPath(this.mesh.position, v) : null;
         this.path = (path && path.length) ? path : [new THREE.Vector3(v.x, 0, v.z)];
+        // 换路 = 换车道法向，旧的让位记账在新法向上无意义，一并清零（不动已在位置上的横移）
+        this.avoid = 0; this.avoidApplied = 0; this.avoidSide = 0;
       },
       atDestination: function () { return this.path.length === 0; },
       popItem: popItem,
@@ -334,6 +336,12 @@
     if (d <= step || d < 1e-4) {
       p.x = tx; p.z = tz;
       c.path.shift();
+      /* snap 把位置硬置到路点，已施加的让位横移随之被抹掉——记账必须同步清零，
+         否则 c.avoid 衰减回 0 时会把这笔已不存在的横移反向施加到另一侧（修前实测
+         最坏反向横移 0.29m、转角跨轨误差 0.39m）。此处不会有跳变：snap 的前提是
+         d ≤ 一帧步长（≈0.027m），残余横移本就已被 stepMove 拉回到该量级以内。
+         顺带清 avoidSide：新一段的车道法向已换，让位方向应重新选。 */
+      c.avoid = 0; c.avoidApplied = 0; c.avoidSide = 0;
     } else {
       p.x += dx / d * step;
       p.z += dz / d * step;
@@ -422,8 +430,14 @@
       fx = c.path[0].x - p.x;
       fz = c.path[0].z - p.z;
       var fl = Math.sqrt(fx * fx + fz * fz);
-      if (fl < 1e-4) { fx = Math.sin(c.mesh.rotation.y); fz = Math.cos(c.mesh.rotation.y); }
-      else { fx /= fl; fz /= fl; }
+      /* 与 stepMove 第 321–329 行同一道防退化保护，理由也同一条：距路点小于当前横向
+         偏移量时，指向路点的方向向量被横向误差主导，法向每帧剧烈旋转（实测离路点
+         0.17m 处法向已偏 47°，到点前转满 90°）。此时再把 da 施加出去就成了沿路径推，
+         横移被 stepMove 悄悄吃掉、而 avoidApplied 记账不变，等 avoid 衰减回 0 时那笔
+         已不存在的横移会被反向施加到另一侧。退化区内一律不更新、不施加，
+         记账留给 stepMove 的 snap 分支统一清零。 */
+      if (fl < 1e-4 || fl <= Math.abs(c.lane) + Math.abs(c.avoid)) return;
+      fx /= fl; fz /= fl;
     } else {
       fx = Math.sin(c.mesh.rotation.y);
       fz = Math.cos(c.mesh.rotation.y);
@@ -444,9 +458,12 @@
         if (fp < bestD) { bestD = fp; bestLat = lat; }
       }
       if (bestD < Infinity) {
-        /* 让位方向一旦选定就锁住，直到箱脱离探测窗口（迟滞）。
-           不锁会自激振荡：侧移本身会改变箱相对车道法向的投影，lat 越过 0 后 sgn 反号，
-           顾客会在箱两侧来回摆。箱正对准（|lat| < 0.05）时按 id 奇偶定侧，保证确定性。 */
+        /* 让位方向一旦选定就锁住，直到箱脱离探测窗口。作用是【多箱穿插时稳住让位对象】，
+           代价是可能一直锁着先看到的那只箱、对后来居上的箱不再重选方向。
+           注意：早先「不锁必自激振荡」的论断是错的——修正符号后
+           p_new = p_old + n·avoid ⇒ lat_new = lat_old + s·AVOID_STEP，|lat| 单调远离 0
+           永不穿零，单箱场景去锁实跑与加锁逐帧完全相同。见报告修复轮 1 的多箱评估。
+           箱正对准（|lat| < 0.05）时按 id 奇偶定侧，保证确定性。 */
         if (!c.avoidSide) {
           c.avoidSide = (Math.abs(bestLat) < 0.05) ? ((c.id % 2) ? 1 : -1) : (bestLat > 0 ? 1 : -1);
         }
