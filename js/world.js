@@ -586,7 +586,9 @@
   }
 
   /* 一段沿 x 铺开的墙（z 为墙面中线）：mesh + 一条厚 ±0.2 的 collider。
-     collider 的可选字段 h（米）：只被 G.physics.syncStatics 读，省略视为 WALL_H。
+     collider 的可选字段 h（米）：读者有两处——G.physics.syncStatics（建静态刚体）与
+     player.boxFitsAt（D-T3 钳投掷出手点），且两者必须一律经 G.physics.heightOf(collider)
+     取值，不得各抄一份「缺省 = WALL_H」（口径漂移会让钳位按错误高度放行，投掷穿墙缺陷重开）。
      寻路与玩家碰撞只读 minX/maxX/minZ/maxZ 四个 2D 字段，加 h 对它们零影响。 */
   function wallAlongX(x0, x1, z) {
     var len = x1 - x0;

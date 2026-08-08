@@ -29,10 +29,18 @@
   ];
   var bodyMats = {};
 
+  /* ---------- D-T4 被砸倒地（spec §7）---------- */
+  var KNOCK_SPEED2 = 2.5 * 2.5;   // 触发阈值 2.5 m/s，比模长平方省一次开方
+  var BOX_HIT_R = 0.30;           // 箱等效球半径（介于内切 0.225 与外接 0.39 之间）
+  var RAGDOLL_FALL = 0.25;        // 倒下动作
+  var RAGDOLL_HOLD = 2.50;        // 躺平结束（决策 4「倒地 2.5 秒」含倒下动作）
+  var RAGDOLL_END = 2.85;         // 爬起结束
+
   var active = [];
   var spawnTimer = null;
   var sceneRef = null;
   var nextId = 1;
+  var EMPTY_LOOSE = [];
 
   /* ---------- 小工具 ---------- */
   function cfg() { return (G.data && G.data.CONFIG) || {}; }
@@ -182,6 +190,9 @@
     var shoeMat = matFor(bodyMats, SHOE_HEX);
 
     var g = new THREE.Group();
+    /* 倒地必须绕「朝向之后的自身左右轴」转：默认 XYZ 下 rotation.x 绕世界 X 轴，
+       顾客朝 ±z 时会歪着倒。rotation.x === 0 时两种 order 完全等价，对既有行为零影响。 */
+    g.rotation.order = 'YXZ';
     var h = (opts.h > 0) ? opts.h : G.rand(0.90, 1.08);
     var w = (opts.w > 0) ? opts.w : G.rand(0.88, 1.22);
 
@@ -268,6 +279,12 @@
       shirtMat: body.shirtMat,
       dims: body.dims,
       lane: G.rand(-0.35, 0.35),
+      avoid: 0,
+      avoidApplied: 0,
+      avoidSide: 0,
+      ragdoll: false,
+      ragdollT: 0,
+      ragdollDir: 1,
       moveTo: function (v) {
         var path = (G.world.nav && G.world.nav.findPath)
           ? G.world.nav.findPath(this.mesh.position, v) : null;
@@ -335,6 +352,69 @@
     c.torso.position.y = c.baseY.torso + bob;
     c.head.position.y = c.baseY.head + bob;
     c.hair.position.y = c.baseY.hair + bob;
+  }
+
+  /* ---------- 被砸判定与倒地姿态（spec §7）---------- */
+  /* 顾客不参与物理：判定由 customers 自己做，G.physics 只提供 looseBoxes() 只读列表。
+     每帧代价 active(≤20) × loose(≤48) ≤ 960 次平方距离比较，无分配；loose 为空整段跳过。 */
+  function findKnockBox(c, loose) {
+    if (!loose || !loose.length || !c.dims) return null;
+    var p = c.mesh.position;
+    var r = 0.22 * c.dims.w + 0.13 + BOX_HIT_R;    // 最宽处是手臂：半展 0.22w + 0.125，取 0.13
+    var topY = 1.77 * c.dims.h + BOX_HIT_R;        // 最高处是头发：1.70 + 最厚发型半高 0.065，×h
+    for (var i = 0; i < loose.length; i++) {
+      var b = loose[i];
+      if (!b.rb || !b.mesh) continue;
+      var v = b.rb.velocity;
+      if (v.x * v.x + v.y * v.y + v.z * v.z < KNOCK_SPEED2) continue;
+      var bp = b.mesh.position;
+      var dx = bp.x - p.x, dz = bp.z - p.z;
+      if (dx * dx + dz * dz > r * r) continue;
+      if (bp.y < -BOX_HIT_R || bp.y > topY) continue;
+      return b;
+    }
+    return null;
+  }
+
+  function stepKnockdown(c, dt, loose) {
+    if (!c.ragdoll) {
+      var hit = findKnockBox(c, loose);
+      if (!hit) return;
+      // 朝向约定：mesh.rotation.y = atan2(dx, dz) → 自身正前方是局部 +Z。
+      // YXZ 下绕局部 +X 正转把 +Y 推向 +Z：+π/2 = 前扑（脸朝下），−π/2 = 后仰。
+      var fx = Math.sin(c.mesh.rotation.y), fz = Math.cos(c.mesh.rotation.y);
+      var v = hit.rb.velocity;
+      c.ragdollDir = (v.x * fx + v.z * fz > 0) ? 1 : -1;   // 从背后砸来 → 前扑
+      c.ragdoll = true;
+      c.ragdollT = 0;
+      return;      // 触发帧只置位，姿态从下一帧起推进
+    }
+    // 倒地期间再次被砸：不重播倒下动作，只把躺平计时拉回
+    if (findKnockBox(c, loose)) c.ragdollT = Math.min(c.ragdollT, RAGDOLL_FALL);
+    c.ragdollT += dt;
+    var t = c.ragdollT, a;
+    if (t <= RAGDOLL_FALL) a = t / RAGDOLL_FALL;
+    else if (t <= RAGDOLL_HOLD) a = 1;
+    else if (t < RAGDOLL_END) a = 1 - (t - RAGDOLL_HOLD) / (RAGDOLL_END - RAGDOLL_HOLD);
+    else a = 0;
+    c.mesh.rotation.x = c.ragdollDir * a * Math.PI / 2;
+    if (t >= RAGDOLL_END) {
+      c.ragdoll = false;
+      c.ragdollT = 0;
+      c.mesh.rotation.x = 0;
+    }
+  }
+
+  /* 一名顾客的完整每帧流程。update() 的循环体与 _test.stepOne 同源同函数，
+     不得在两处各写一份（否则自测测的与真实跑的会分叉）。 */
+  function stepCustomer(c, dt, loose) {
+    stepKnockdown(c, dt, loose);
+    if (!c.ragdoll) {
+      var hadPath = c.path.length > 0;
+      stepMove(c, dt);
+      applyGait(c, dt, hadPath);
+    }
+    stepState(c, dt);      // 无论倒地与否照常：patience/shopTime 继续累计，杜绝「砸倒顾客拖延耐心」
   }
 
   /* ---------- 购物 ---------- */
@@ -490,12 +570,10 @@
       }
     }
 
+    var loose = (G.physics && G.physics.looseBoxes) ? G.physics.looseBoxes() : EMPTY_LOOSE;
     for (var i = active.length - 1; i >= 0; i--) {
       var c = active[i];
-      var hadPath = c.path.length > 0;
-      stepMove(c, dt);
-      applyGait(c, dt, hadPath);
-      stepState(c, dt);
+      stepCustomer(c, dt, loose);
       if (c.removed) active.splice(i, 1);
     }
   }
@@ -524,12 +602,17 @@
           legL: body.legL, legR: body.legR, armL: body.armL, armR: body.armR,
           torso: body.torso, head: body.head, hair: body.hair,
           baseY: body.baseY, shirtMat: body.shirtMat, dims: body.dims,
-          items: [], popItem: popItem };
+          items: [], popItem: popItem,
+          id: nextId++, path: [], lane: 0, avoid: 0, avoidApplied: 0, avoidSide: 0,
+          ragdoll: false, ragdollT: 0, ragdollDir: 1 };
         return c;
       },
       gait: function (c, dt, moving) { applyGait(c, dt, moving); },
       addHand: function (c, pid) { addHandCube(c, pid); },
-      remove: function (c) { if (c.mesh.parent) c.mesh.parent.remove(c.mesh); }
+      remove: function (c) { if (c.mesh.parent) c.mesh.parent.remove(c.mesh); },
+      stepOne: function (c, dt) {
+        stepCustomer(c, dt, (G.physics && G.physics.looseBoxes) ? G.physics.looseBoxes() : EMPTY_LOOSE);
+      }
     }
   };
 })();

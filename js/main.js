@@ -1078,6 +1078,85 @@
         ct.remove(gc);
       }
 
+      /* --- D-T4 被砸倒地（spec §7）--- */
+      function makeKnockBox(c, speed) {
+        var p = c.mesh.position;
+        var b = G.world.spawnBox('f_noodle', { x: p.x, z: p.z - 0.2 });
+        if (!b) return null;
+        b.mesh.position.set(p.x, 1.0, p.z - 0.2);
+        if (b.rb) {
+          b.rb.position.set(p.x, 1.0, p.z - 0.2);
+          b.rb.wakeUp();
+          b.rb.velocity.set(0, 0, speed);
+        }
+        return b;
+      }
+      var kc = G.customers._test.spawnOne();
+      kc.mesh.position.set(6.0, 0, 0.0);
+      kc.mesh.rotation.y = 0;                       // 正前方 = 局部 +Z
+      var kbox = makeKnockBox(kc, 5.0);
+      G.customers._test.stepOne(kc, 0.05);          // 触发帧：只置位，姿态从下一帧起推进
+      var kTriggered = kc.ragdoll === true;
+      var kOrder = kc.mesh.rotation.order;
+      for (var kfi = 0; kfi < 5; kfi++) G.customers._test.stepOne(kc, 0.05);   // 累计 0.25s
+      var kFallen = Math.abs(Math.abs(kc.mesh.rotation.x) - Math.PI / 2) < 0.01;
+      ck('cust.knockdown', kTriggered && kOrder === 'YXZ' && kFallen,
+        'ragdoll=' + kc.ragdoll + '，rotation.order=' + kOrder +
+        '，0.25s 后 rotation.x=' + round2(kc.mesh.rotation.x) + '（应 ±' + round2(Math.PI / 2) + '）');
+      if (kbox) G.world.destroyBox(kbox);
+
+      var sc2 = G.customers._test.spawnOne();
+      sc2.mesh.position.set(6.0, 0, 2.0);
+      sc2.mesh.rotation.y = 0;
+      var sbox = makeKnockBox(sc2, 1.0);            // < 2.5 m/s
+      for (var sfi = 0; sfi < 10; sfi++) G.customers._test.stepOne(sc2, 0.05);
+      ck('cust.slowBoxNoKnockdown', sc2.ragdoll !== true,
+        '1.0 m/s 的箱不得触发倒地，实测 ragdoll=' + sc2.ragdoll);
+      if (sbox) G.world.destroyBox(sbox);
+
+      var kp0 = kc.mesh.position.clone();
+      var kTorso0 = kc.torso.position.y;
+      var kFrozen = true;
+      for (var kri = 0; kri < 53; kri++) {           // 已推进 0.25s，再推进 2.65s → 合计 2.90s ≥ 2.85
+        G.customers._test.stepOne(kc, 0.05);
+        if (kc.ragdoll && (kc.torso.position.y !== kTorso0 || kc.mesh.position.distanceTo(kp0) > 1e-9)) kFrozen = false;
+      }
+      ck('cust.knockdownRecovers',
+        kc.ragdoll === false && kc.mesh.rotation.x === 0 && kc.mesh.position.distanceTo(kp0) < 1e-6,
+        '2.9s 后 ragdoll=' + kc.ragdoll + '，rotation.x=' + kc.mesh.rotation.x +
+        '，位移 ' + kc.mesh.position.distanceTo(kp0));
+      ck('cust.ragdollFreezesGait', kFrozen,
+        '倒地期间 torso.position.y 与 mesh.position 必须一帧不动（applyGait 与 stepMove 双冻结）');
+
+      var hc = G.customers._test.spawnOne();
+      hc.mesh.position.set(6.0, 0, -2.0);
+      hc.mesh.rotation.y = 0;
+      G.customers._test.addHand(hc, 'f_noodle');
+      G.customers._test.addHand(hc, 'd_water');
+      var hHands0 = hc.hands.children.length;
+      var hbox = makeKnockBox(hc, 5.0);
+      for (var hfi = 0; hfi < 10; hfi++) G.customers._test.stepOne(hc, 0.05);
+      ck('cust.knockdownKeepsHands',
+        hc.ragdoll === true && hc.hands.children.length === hHands0 && hc.hands.parent === hc.mesh,
+        '倒地中手持 ' + hc.hands.children.length + '/' + hHands0 + ' 件，hands.parent === mesh=' +
+        (hc.hands.parent === hc.mesh));
+      if (hbox) G.world.destroyBox(hbox);
+
+      var pc2 = G.customers._test.spawnOne();
+      pc2.mesh.position.set(6.0, 0, -4.0);
+      pc2.mesh.rotation.y = 0;
+      pc2.state = 'queueing';
+      pc2.patience = 0;
+      var pbox2 = makeKnockBox(pc2, 5.0);
+      for (var pfi = 0; pfi < 57; pfi++) G.customers._test.stepOne(pc2, 0.05);   // 2.85s
+      if (pbox2) G.world.destroyBox(pbox2);
+      ck('cust.knockdownPatienceRuns', Math.abs(pc2.patience - 2.85) < 0.05,
+        '倒地 2.85s 期间 patience 增量 ' + round2(pc2.patience) + '（应 ≈2.85，证明 stepState 照常推进）');
+      G.customers._test.remove(kc);
+      G.customers._test.remove(sc2);
+      G.customers._test.remove(hc);
+      G.customers._test.remove(pc2);
+
       /* --- 收银员站桩美术（小任务）--- */
       function findCashierGroup() {
         var found = null, n = 0;
@@ -1147,6 +1226,40 @@
         return !!t && t.phase === 'ready';
       });
       ck('customer.queued', ready, ready ? '模拟 ' + round2(G.state.clock) + 's 后队首就绪' : '超时：无顾客到达收银台');
+
+      /* D-T4 #23：对真实排队顾客做同一测试——交易状态机与经济一律不动 */
+      var ncCust = null, ncRegs = G.checkout._test.registers();
+      for (var nci = 0; nci < ncRegs.length && !ncCust; nci++) {
+        var ncQ = ncRegs[nci].queue;
+        if (ncQ && ncQ.length) ncCust = ncQ[0];
+      }
+      var ncOk = false, ncDetail = '队列里没有顾客，无法测';
+      if (ncCust) {
+        var ncPhase0 = G.checkout._test.tx(0) ? G.checkout._test.tx(0).phase : null;
+        var ncMoney0 = G.state.money, ncXp0 = G.state.xp, ncCogs0 = G.state.dayStats.cogs;
+        var ncPos0 = ncCust.mesh.position.clone();
+        var ncBox = G.world.spawnBox('f_noodle', { x: ncCust.mesh.position.x, z: ncCust.mesh.position.z - 0.2 });
+        if (ncBox) {
+          ncBox.mesh.position.set(ncCust.mesh.position.x, 1.0, ncCust.mesh.position.z - 0.2);
+          if (ncBox.rb) { ncBox.rb.position.set(ncBox.mesh.position.x, 1.0, ncBox.mesh.position.z); ncBox.rb.wakeUp(); ncBox.rb.velocity.set(0, 0, 5.0); }
+        }
+        G.customers._test.stepOne(ncCust, 0.05);
+        var ncRag = ncCust.ragdoll === true;
+        if (ncBox) G.world.destroyBox(ncBox);
+        /* 58 而非 57：触发帧只置位不累计，ragdollT 从下一帧才起步，57 帧的 0.05 累加
+           实测落在 2.849999999999998（浮点漂移），比 RAGDOLL_END 差 2e-15 而爬不起来。
+           爬起判定不加 epsilon 迁就——真实 dt 可变，恰好压线是测度零事件；
+           这里与 cust.knockdownRecovers 一样刻意跨过边界（2.90s）再验收。 */
+        for (var ncj = 0; ncj < 58; ncj++) G.customers._test.stepOne(ncCust, 0.05);
+        var ncPhase1 = G.checkout._test.tx(0) ? G.checkout._test.tx(0).phase : null;
+        ncOk = ncRag && ncPhase1 === ncPhase0 &&
+          G.state.money === ncMoney0 && G.state.xp === ncXp0 && G.state.dayStats.cogs === ncCogs0 &&
+          ncCust.mesh.position.distanceTo(ncPos0) < 1e-6 && ncCust.ragdoll === false;
+        ncDetail = '被砸=' + ncRag + '，爬起后 ragdoll=' + ncCust.ragdoll + '，tx.phase ' + ncPhase0 + '→' + ncPhase1 +
+          '，money ' + ncMoney0 + '→' + G.state.money + '，xp ' + ncXp0 + '→' + G.state.xp +
+          '，cogs ' + ncCogs0 + '→' + G.state.dayStats.cogs + '，位移 ' + ncCust.mesh.position.distanceTo(ncPos0);
+      }
+      ck('cust.knockdownNoConsequence', ncOk, ncDetail);
 
       /* --- 收银台站位系统（Task 7）--- */
       ck('player.poseApi',
