@@ -2239,6 +2239,14 @@
       }
       var slotsStocked = 0;
       for (var sfi = 0; sfi < G.world.slots.length; sfi++) if (G.world.slots[sfi].count > 0) slotsStocked++;
+      /* D-T7：闸门场景纳入散落地面箱（BOX_HARD_CAP 48 − 仓库 24 − 卸货 12 = 最多 12 只，
+         每只 2 mesh = +24 drawable）。测完立刻销毁，让后面的 world.boxHardCap 场景不受影响 */
+      var gateStray = [];
+      for (var gsi = 0; gsi < 12; gsi++) {
+        var gsb = G.world.spawnBox(G.data.PRODUCTS[gsi % G.data.PRODUCTS.length].id,
+          { x: 6 + (gsi % 4) * 0.7, z: -1.0 - Math.floor(gsi / 4) * 0.7 });
+        if (gsb) gateStray.push(gsb);
+      }
       var drawN = countDrawables(scene);
       /* 口径 = 主 pass 可见对象数（自身与全部祖先 visible !== false 的 Mesh/InstancedMesh），
          不含阴影 pass 的深度提交，也不等于 renderer 的真实 draw call 总数——
@@ -2248,7 +2256,9 @@
         slotsStocked + '/' + G.world.slots.length +
         ' 格有货、收银 3 台、仓库 ' + stFilled + ' 箱、卸货区 ' + yardTotal + ' 箱、起手清掉散落箱 ' +
         strayCleared + ' 只、测试顾客 20 名 + 在场 ' +
-        G.customers.active.length + ' 名（每客塞 12 件手持，实渲染 ' + handRendered + '）');
+        G.customers.active.length + ' 名（每客塞 12 件手持，实渲染 ' + handRendered +
+        '）、散落地面箱 ' + gateStray.length + ' 只');
+      for (var gsj = 0; gsj < gateStray.length; gsj++) G.world.destroyBox(gateStray[gsj]);
 
       /* C-final：场上箱实体总数硬上限（GDD §3 的 48）。地面囤箱脱离 12 位判据且跨天不清，
          是闸门唯一的无界项——本条钉死 spawnBox 起手的总数校验。现场：仓库 24 + 卸货 12 */
@@ -2264,7 +2274,28 @@
         '仓库 24 + 卸货 12 = ' + capBefore + ' 只，地面再塞 ' + capBoxes.length +
         ' 只到总数 ' + capTotal + '（上限 48）后 spawnBox 必须返回 null，实返回 ' +
         (capRejected === null ? 'null' : '箱'));
-      for (var cbj = 0; cbj < capBoxes.length; cbj++) G.world.destroyBox(capBoxes[cbj]);
+
+      /* D-T7：满配体量上界与步进耗时。此刻场上 = 全开静态（44 collider + 2 plane）+ 箱 48 */
+      ck('physics.bodyCountCeiling', G.physics._test.bodyCount() <= 97,
+        '满配灌店 body 总数 ' + G.physics._test.bodyCount() + '（静态 ' +
+        G.physics._test.staticCount() + ' + 箱 ' + G.world.allBoxes().length + '），天花板 97');
+      /* 强制不休眠：休眠体不进窄相，睡着测出来的是空载步进，不是满配负载 */
+      var wakeList = G.physics.looseBoxes(), wi, wakeN = wakeList.length;
+      for (wi = 0; wi < wakeN; wi++) { wakeList[wi].rb.allowSleep = false; wakeList[wi].rb.wakeUp(); }
+      var stepTimes = [];
+      for (wi = 0; wi < 60; wi++) {
+        var st0 = (window.performance && performance.now) ? performance.now() : Date.now();
+        G.physics._test.stepOnce();
+        stepTimes.push(((window.performance && performance.now) ? performance.now() : Date.now()) - st0);
+      }
+      stepTimes.sort(function (a, b) { return a - b; });
+      var p95 = stepTimes[56];
+      var wakeBack = G.physics.looseBoxes();
+      for (wi = 0; wi < wakeBack.length; wi++) wakeBack[wi].rb.allowSleep = true;
+      ck('perf.physicsStep', p95 <= 3.5,
+        '满配 ' + G.physics._test.bodyCount() + ' 体（' + wakeN + ' 只箱强制不休眠）连续 60 步：p50 ' +
+        round2(stepTimes[30]) + 'ms / p95 ' + round2(p95) + 'ms / max ' + round2(stepTimes[59]) +
+        'ms，预算 3.5ms');
 
       /* --- 渲染（无头环境可能没有 WebGL）--- */
       if (renderer) {
@@ -2289,6 +2320,11 @@
         ck('render', true, '无 WebGL（' + rendererNote + '）：已跳过渲染，游戏逻辑在无渲染下完整运行');
         ck('perf.renderCalls', true, '无 WebGL：无法读 renderer.info.render.calls，跳过');
       }
+      /* capBoxes 的清场刻意留到渲染之后：这 12 只正是「地面散落箱」，把总数顶到
+         BOX_HARD_CAP 48 —— perf.renderCalls 的口径必须与 perf.mainPassDrawables 同为
+         满配最坏场景，提前销毁会让总提交数少数 48 次（主 pass 24 + 阴影 pass 24）。
+         自测到此结束，之后无人再依赖场上箱数。 */
+      for (var cbj = 0; cbj < capBoxes.length; cbj++) G.world.destroyBox(capBoxes[cbj]);
     } catch (e) {
       runtimeErrors.push(String(e && e.stack || e));
       ck('selftest.exception', false, String(e && e.message || e));
