@@ -289,6 +289,7 @@
       avoid: 0,
       avoidApplied: 0,
       avoidSide: 0,
+      avoidBox: null,
       ragdoll: false,
       ragdollT: 0,
       ragdollDir: 1,
@@ -297,7 +298,7 @@
           ? G.world.nav.findPath(this.mesh.position, v) : null;
         this.path = (path && path.length) ? path : [new THREE.Vector3(v.x, 0, v.z)];
         // 换路 = 换车道法向，旧的让位记账在新法向上无意义，一并清零（不动已在位置上的横移）
-        this.avoid = 0; this.avoidApplied = 0; this.avoidSide = 0;
+        this.avoid = 0; this.avoidApplied = 0; this.avoidSide = 0; this.avoidBox = null;
       },
       atDestination: function () { return this.path.length === 0; },
       popItem: popItem,
@@ -341,7 +342,7 @@
          最坏反向横移 0.29m、转角跨轨误差 0.39m）。此处不会有跳变：snap 的前提是
          d ≤ 一帧步长（≈0.027m），残余横移本就已被 stepMove 拉回到该量级以内。
          顺带清 avoidSide：新一段的车道法向已换，让位方向应重新选。 */
-      c.avoid = 0; c.avoidApplied = 0; c.avoidSide = 0;
+      c.avoid = 0; c.avoidApplied = 0; c.avoidSide = 0; c.avoidBox = null;
     } else {
       p.x += dx / d * step;
       p.z += dz / d * step;
@@ -432,10 +433,11 @@
       var fl = Math.sqrt(fx * fx + fz * fz);
       /* 与 stepMove 第 321–329 行同一道防退化保护，理由也同一条：距路点小于当前横向
          偏移量时，指向路点的方向向量被横向误差主导，法向每帧剧烈旋转（实测离路点
-         0.17m 处法向已偏 47°，到点前转满 90°）。此时再把 da 施加出去就成了沿路径推，
-         横移被 stepMove 悄悄吃掉、而 avoidApplied 记账不变，等 avoid 衰减回 0 时那笔
-         已不存在的横移会被反向施加到另一侧。退化区内一律不更新、不施加，
-         记账留给 stepMove 的 snap 分支统一清零。 */
+         0.17m 处法向已偏 47°，到点前转满 90°），此时施加 da 等于沿路径推。
+         退化区内一律不更新、不施加，记账留给 snap 分支统一清零。
+         【归因，别再写错】反向横移 0.29m / 转角跨轨 0.39m 那两笔战果**不是本段的**——
+         逐项撤销实测，只撤本段两项指标一字不变，全部来自下面 stepMove 的 snap 清账。
+         本段的实收益是箱堆在路点上/后时 minD 0.012 → 0.150，量小但方向对。 */
       if (fl < 1e-4 || fl <= Math.abs(c.lane) + Math.abs(c.avoid)) return;
       fx /= fl; fz /= fl;
     } else {
@@ -446,7 +448,7 @@
     var nx = -fz, nz = fx;
     var target = 0;
     if (c.path.length > 1 && loose && loose.length) {
-      var bestD = Infinity, bestLat = 0;
+      var bestD = Infinity, bestLat = 0, bestBox = null, lockSeen = false;
       for (var i = 0; i < loose.length; i++) {
         var b = loose[i];
         if (!b.mesh) continue;
@@ -455,24 +457,30 @@
         if (!(fp > 0) || fp > AVOID_RANGE) continue;
         var lat = dx * nx + dz * nz;                  // 在车道法向上的投影
         if (Math.abs(lat) >= AVOID_HALF_W) continue;
-        if (fp < bestD) { bestD = fp; bestLat = lat; }
+        if (b === c.avoidBox) lockSeen = true;
+        if (fp < bestD) { bestD = fp; bestLat = lat; bestBox = b; }
       }
       if (bestD < Infinity) {
-        /* 让位方向一旦选定就锁住，直到箱脱离探测窗口。作用是【多箱穿插时稳住让位对象】，
-           代价是可能一直锁着先看到的那只箱、对后来居上的箱不再重选方向。
-           注意：早先「不锁必自激振荡」的论断是错的——修正符号后
-           p_new = p_old + n·avoid ⇒ lat_new = lat_old + s·AVOID_STEP，|lat| 单调远离 0
-           永不穿零，单箱场景去锁实跑与加锁逐帧完全相同。见报告修复轮 1 的多箱评估。
+        /* 让位方向锁在【锁住的那只箱】身上，它一离开探测窗口就重取（c.avoidBox）。
+           作用是多箱穿插时稳住让位对象，避免每帧改换目标。
+           两条经实验推翻的旧论断，别再写回来：
+           ① 「不锁必自激振荡」是错的——修正符号后 p_new = p_old + n·avoid
+              ⇒ lat_new = lat_old + s·AVOID_STEP，|lat| 单调远离 0 永不穿零，
+              单箱去锁与加锁逐帧完全相同。
+           ② 「窗口空了才解锁」（本条最初的写法）在箱距 < AVOID_RANGE 的密排下有害：
+              锁跨箱延续，顾客躲开左边那只后一路撞进右边那只（复审 3430 组三箱布局：
+              穿箱组 1305 → 995，最坏抖动 7 → 14，仍远低于完全去锁的 32）。
            箱正对准（|lat| < 0.05）时按 id 奇偶定侧，保证确定性。 */
-        if (!c.avoidSide) {
+        if (!c.avoidSide || !lockSeen) {
           c.avoidSide = (Math.abs(bestLat) < 0.05) ? ((c.id % 2) ? 1 : -1) : (bestLat > 0 ? 1 : -1);
+          c.avoidBox = bestBox;
         }
         target = -c.avoidSide * AVOID_STEP;
       } else {
-        c.avoidSide = 0;
+        c.avoidSide = 0; c.avoidBox = null;
       }
     } else {
-      c.avoidSide = 0;
+      c.avoidSide = 0; c.avoidBox = null;
     }
     c.avoid += (target - c.avoid) * Math.min(1, dt * AVOID_SMOOTH);
     var lo = -AVOID_MAX - c.lane, hi = AVOID_MAX - c.lane;   // 保证 |lane + avoid| ≤ 0.80
@@ -685,7 +693,7 @@
           torso: body.torso, head: body.head, hair: body.hair,
           baseY: body.baseY, shirtMat: body.shirtMat, dims: body.dims,
           items: [], popItem: popItem,
-          id: nextId++, path: [], lane: 0, avoid: 0, avoidApplied: 0, avoidSide: 0,
+          id: nextId++, path: [], lane: 0, avoid: 0, avoidApplied: 0, avoidSide: 0, avoidBox: null,
           ragdoll: false, ragdollT: 0, ragdollDir: 1 };
         return c;
       },

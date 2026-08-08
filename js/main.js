@@ -1237,6 +1237,32 @@
       if (iBox) G.world.destroyBox(iBox);
       G.customers._test.remove(ic);
 
+      /* 修复轮 1 的三处「反向横移」修复此前零护栏：逐个撤销跑全量自测都是 161 全绿。
+         本条钉住其中承重的那处——stepMove 的 snap 分支清账。机理：顾客带让位量逼近中途
+         路点时 snap 把位置硬置到路点、抹掉已施加的横移，而 scalar 记账 avoidApplied 不知道，
+         等 c.avoid 衰减回 0 时那笔已不存在的横移被反向施加到另一侧。
+         箱位取 130 组扫描里最坏的一组 (x5.70, z-0.3)；跑满 8s 走完 -6 → 0 → 6 整条路径。 */
+      var rvC = G.customers._test.spawnOne();
+      rvC.mesh.position.set(6.0, 0, -6.0);
+      rvC.mesh.rotation.y = 0;
+      rvC.lane = 0;
+      rvC.path = [new THREE.Vector3(6.0, 0, 0.0), new THREE.Vector3(6.0, 0, 6.0)];
+      var rvBox = G.world.spawnBox('f_noodle', { x: 5.70, z: -0.3 });
+      var rvPos = 0, rvNeg = 0;
+      if (rvBox) {
+        for (var rvI = 0; rvI < 480; rvI++) {
+          G.customers._test.stepOne(rvC, 1 / 60);
+          var rvOff = rvC.mesh.position.x - 6.0;
+          if (rvOff > rvPos) rvPos = rvOff;
+          if (-rvOff > rvNeg) rvNeg = -rvOff;
+        }
+      }
+      var rvRev = Math.min(rvPos, rvNeg);              // 两侧偏移里小的那一侧 = 反方向横移
+      ck('cust.dodgeNoReverseDrift', rvBox && rvRev <= 0.15,
+        '让位后不得反向甩到另一侧：两侧偏移 +' + round2(rvPos) + ' / -' + round2(rvNeg) +
+        '，反向横移 ' + round2(rvRev) + 'm（应 ≤0.15；修前实测 0.29）');
+      if (rvBox) G.world.destroyBox(rvBox);
+      G.customers._test.remove(rvC);
 
 
       G.customers._test.remove(kc);
