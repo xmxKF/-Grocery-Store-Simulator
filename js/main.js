@@ -1264,6 +1264,44 @@
       if (rvBox) G.world.destroyBox(rvBox);
       G.customers._test.remove(rvC);
 
+      /* 守修③（moveTo 换路清账）。差分度量：一名正在让位的顾客换路后，必须与
+         「同位置、同朝向、同 lane、同目的地，但没有让位记账」的对照顾客走出逐帧相同的轨迹。
+         不清账时旧的 c.avoid 会沿【新】车道法向解绕，把人甩离新轨。
+         _test.spawnOne() 此前没有 moveTo、够不着这条路径，现已与 spawn() 共用
+         同一个 moveToImpl 函数引用（不是复制一份实现）。 */
+      var rrA = G.customers._test.spawnOne();
+      rrA.mesh.position.set(6.0, 0, -6.0);
+      rrA.mesh.rotation.y = 0;
+      rrA.lane = 0;
+      rrA.path = [new THREE.Vector3(6.0, 0, 0.0), new THREE.Vector3(6.0, 0, 6.0)];
+      var rrBox = G.world.spawnBox('f_noodle', { x: 6.0, z: -4.6 });
+      var rrGap = 0, rrAvoid0 = 0;
+      if (rrBox) {
+        for (var rrI = 0; rrI < 40; rrI++) G.customers._test.stepOne(rrA, 1 / 60);
+        rrAvoid0 = Math.abs(rrA.avoid);                  // 换路前必须真的带着让位量
+        G.world.destroyBox(rrBox);
+        var rrB = G.customers._test.spawnOne();
+        rrB.id = rrA.id;              // 正对准时按 id 奇偶定侧，对照组必须同奇偶才可比
+        rrB.mesh.position.copy(rrA.mesh.position);
+        rrB.mesh.rotation.y = rrA.mesh.rotation.y;
+        rrB.lane = rrA.lane;
+        var rrTgt = G.world.nav.aisleSpots[1] || G.world.nav.exit || G.world.nav.entry;
+        rrA.moveTo(rrTgt);
+        rrB.moveTo(rrTgt);            // 同位置 → findPath 必然产出同一条路径
+        for (var rrJ = 0; rrJ < 150; rrJ++) {
+          G.customers._test.stepOne(rrA, 1 / 60);
+          G.customers._test.stepOne(rrB, 1 / 60);
+          var rrG = rrA.mesh.position.distanceTo(rrB.mesh.position);
+          if (rrG > rrGap) rrGap = rrG;
+        }
+        G.customers._test.remove(rrB);
+      }
+      ck('cust.dodgeRerouteClears', !!rrBox && rrAvoid0 > 0.2 && rrGap <= 0.02,
+        '带让位量换路后必须与「无让位记账」的对照顾客轨迹一致：换路前 avoid=' +
+        round2(rrAvoid0) + '（须 >0.2 否则夹具空洞），换路后最大分离 ' +
+        round2(rrGap) + 'm（应 ≤0.02）');
+      G.customers._test.remove(rrA);
+
 
       G.customers._test.remove(kc);
       G.customers._test.remove(sc2);

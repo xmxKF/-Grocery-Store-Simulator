@@ -244,6 +244,17 @@
     };
   }
 
+  /* spawn() 与 _test.spawnOne() 挂的是【同一个函数引用】，不得在两处各写一份：
+     「换路清让位记账」这类逻辑一旦复制，就会在夹具里悄悄缺席，而断言又只能看到夹具
+     ——cust.dodgeRerouteClears 此前够不着这条路径，正是因为 _test 的对象根本没有 moveTo。 */
+  function moveToImpl(v) {
+    var path = (G.world.nav && G.world.nav.findPath)
+      ? G.world.nav.findPath(this.mesh.position, v) : null;
+    this.path = (path && path.length) ? path : [new THREE.Vector3(v.x, 0, v.z)];
+    // 换路 = 换车道法向，旧的让位记账在新法向上无意义，一并清零（不动已在位置上的横移）
+    this.avoid = 0; this.avoidApplied = 0; this.avoidSide = 0; this.avoidBox = null;
+  }
+
   function spawn() {
     var sc = scene();
     var nav = G.world.nav;
@@ -293,13 +304,7 @@
       ragdoll: false,
       ragdollT: 0,
       ragdollDir: 1,
-      moveTo: function (v) {
-        var path = (G.world.nav && G.world.nav.findPath)
-          ? G.world.nav.findPath(this.mesh.position, v) : null;
-        this.path = (path && path.length) ? path : [new THREE.Vector3(v.x, 0, v.z)];
-        // 换路 = 换车道法向，旧的让位记账在新法向上无意义，一并清零（不动已在位置上的横移）
-        this.avoid = 0; this.avoidApplied = 0; this.avoidSide = 0; this.avoidBox = null;
-      },
+      moveTo: moveToImpl,
       atDestination: function () { return this.path.length === 0; },
       popItem: popItem,
       leaveStore: function () { leave(this); }
@@ -694,6 +699,7 @@
           baseY: body.baseY, shirtMat: body.shirtMat, dims: body.dims,
           items: [], popItem: popItem,
           id: nextId++, path: [], lane: 0, avoid: 0, avoidApplied: 0, avoidSide: 0, avoidBox: null,
+          moveTo: moveToImpl,
           ragdoll: false, ragdollT: 0, ragdollDir: 1 };
         return c;
       },
