@@ -1,10 +1,28 @@
 // js/physics.js — cannon.js 刚体世界：静态体从 colliders 自动生成、纸箱刚体、每帧写回 mesh
 // 归属：physics agent。只通过 CONTRACTS.md 中定义的 API 与其它模块通信。
 //
-// 【本文件不得出现 interpolatedQuaternion】：cannon 0.6.2 对醒着的动态体根本不写入该字段
-// （只有 STATIC/SLEEPING 分支才 copy），失效是静默的——静止时看着完全正常、一扔就不转。
-// 位置写回用 body.interpolatedPosition，旋转写回用 body.quaternion。
-// 自测断言 physics.noInterpolatedQuaternion 扫描 _test.src()，而 src() 返回下面这个具名
+// 【本文件不得出现 interpolatedQuaternion / interpolatedPosition】：cannon 0.6.2 的整条
+// interpolated* 家族对【醒着的动态体】都是坏的，且失效方式都是静默的：
+//   · interpolatedQuaternion —— 只有 STATIC/SLEEPING 分支才 copy，醒着的动态体永远读到
+//     单位四元数。表现：静止时看着完全正常、一扔就不转。
+//   · interpolatedPosition —— World.step 的插值式是
+//         interpolatedPosition = position + (position − previousPosition) × l,
+//         l = (world.time % (1/60)) / (1/60) ∈ [0, 1)
+//     而 cannon 0.6.2 全库【从不写 previousPosition】（只在 Body 构造里 new Vec3() 初始化，
+//     只在 World.step 里被读），于是它恒为 (0,0,0)，插值式退化成 position × (1 + l)——
+//     一个随帧长抖动的【原点缩放】，不是平滑。固定步长下 l≈0 故误差只有 1–2%（这就是 D 期
+//     171 条断言全绿的原因，它们全用 physics.update(1/60) 驱动）；真实 rAF 的变步长下
+//     l 扫满 [0,1)，实测 interpolatedPosition / position 达 1.978——飞行中的箱被画到店外
+//     天空里，且 customers 的 findKnockBox / stepAvoid 读的就是这个错位置，砸不倒顾客。
+//     D-V1 实测（浏览器 + 纯 Node require('cannon.min.js') 双路复现）。
+// 位置与旋转一律写回 body.position / body.quaternion（= 最近一次物理步的真值）。
+// 【为什么不自己维护 previousPosition 来把平滑补回来】：update() 走的是
+//   world.step(FIXED_STEP, dt, MAX_SUB_STEPS)，一次调用内跑 0..MAX_SUB_STEPS 个内部步，
+//   正确的 previousPosition 必须是【最后一个内部步之前】的位置（cannon 原设计是在
+//   internalStep 里记），而在模块层只拿得到「本次 step 之前」的位置。用后者按 l 插值在
+//   0 个和 2 个内部步的帧上都会外推/滞后，比不插值更糟。60Hz 物理 + ≥60fps 渲染下多数帧
+//   本就是 1:1，直接用 position 的抖动不可见。要真做平滑得先接管 internalStep，另案。
+// 自测断言 physics.noInterpolatedFields 扫描 _test.src()，而 src() 返回下面这个具名
 // 函数表达式 physicsModule 的 toString()。
 // 【扫描面】= 该 IIFE 的函数体全文——常量区、模块顶层代码、全部具名/匿名函数与它们
 //   函数体内的注释都在内，新增函数无需登记任何名单。
@@ -139,9 +157,12 @@
     var loose = looseBoxes();
     for (var i = 0; i < loose.length; i++) {
       var b = loose[i];
-      b.mesh.position.copy(b.rb.interpolatedPosition);   // 平滑
-      /* 旋转必须读 quaternion：cannon 0.6.2 变步长路径下对醒着的动态体不写插值四元数
-         （永远是单位四元数），用它的后果是「箱不转」且不报错。见 spec §2.2 与文件头 */
+      /* 位置与旋转都必须读 body 的真值：cannon 0.6.2 变步长路径下，对醒着的动态体
+         整条 interpolated* 家族都是坏的（四元数恒为单位四元数；位置退化成随帧长抖动的
+         原点缩放 position×(1+l)，实测 1.978×）。两者的失效都是静默的。
+         被禁的两个字段名只能出现在文件头注释里（断言 physics.noInterpolatedFields 扫描
+         的是本 IIFE 全文），故此处不复述；详见文件头与 spec §2.2。 */
+      b.mesh.position.copy(b.rb.position);
       b.mesh.quaternion.copy(b.rb.quaternion);
     }
   }

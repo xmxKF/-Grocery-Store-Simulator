@@ -861,9 +861,16 @@
       ck('physics.noTunneling', tun.wallZ < 2.8 && tun.dropY > 0,
         'v=' + tunV + ' 正对半厚 0.2 的墙（内面 z=2.8）120 步后 z=' + round2(tun.wallZ) +
         '；竖直下扔 120 步后 y=' + round2(tun.dropY));
-      ck('physics.noInterpolatedQuaternion',
-        !!G.physics && G.physics._test.src().indexOf('interpolatedQuaternion') === -1,
-        'js/physics.js 整个模块（IIFE 全文）源码不得出现 interpolatedQuaternion（cannon 0.6.2 对醒着的动态体永不写入该字段，失效静默）');
+      /* D-V1：原本只禁 interpolatedQuaternion，漏掉了同一 API 家族的孪生兄弟
+         interpolatedPosition —— cannon 0.6.2 全库从不写 previousPosition，于是对醒着的
+         动态体 interpolatedPosition = position×(1+l)（l 随帧长抖动）。两者同一失效机理、
+         同样静默，一并源码级钉死。 */
+      var ipSrc = G.physics ? G.physics._test.src() : '';
+      ck('physics.noInterpolatedFields',
+        !!G.physics && ipSrc.indexOf('interpolatedQuaternion') === -1 &&
+        ipSrc.indexOf('interpolatedPosition') === -1,
+        'js/physics.js 整个模块（IIFE 全文）源码不得出现 interpolatedQuaternion / interpolatedPosition' +
+        '（cannon 0.6.2 对醒着的动态体两者都是坏的：前者恒为单位四元数，后者恒为 position×(1+l)，失效均静默）');
 
       /* CEIL_Y 除 §9.2 阴影视锥外还承载「翻不过关着的卷帘门」：门洞处墙体断开，
          关闭的卷帘门静态体只到 h=3.0，其上到 WALL_H 的空当由天花板 plane 压住。
@@ -949,9 +956,9 @@
         mfBox.rb.angularVelocity.set(2, 3, 1);
         for (var mfi = 0; mfi < 30; mfi++) G.physics.update(1 / 60);
         var mfDp = Math.sqrt(
-          Math.pow(mfBox.mesh.position.x - mfBox.rb.interpolatedPosition.x, 2) +
-          Math.pow(mfBox.mesh.position.y - mfBox.rb.interpolatedPosition.y, 2) +
-          Math.pow(mfBox.mesh.position.z - mfBox.rb.interpolatedPosition.z, 2));
+          Math.pow(mfBox.mesh.position.x - mfBox.rb.position.x, 2) +
+          Math.pow(mfBox.mesh.position.y - mfBox.rb.position.y, 2) +
+          Math.pow(mfBox.mesh.position.z - mfBox.rb.position.z, 2));
         var mfDq = Math.max(
           Math.abs(mfBox.mesh.quaternion.x - mfBox.rb.quaternion.x),
           Math.abs(mfBox.mesh.quaternion.y - mfBox.rb.quaternion.y),
@@ -965,6 +972,45 @@
       }
       ck('physics.meshFollowsBody', mfOk, '30 帧后 mesh 必须逐字跟随 body：' + mfDetail);
       if (mfBox) G.world.destroyBox(mfBox);
+
+      /* D-V1：上面那条用固定步长 physics.update(1/60) 驱动，此时 world.time 恒为 1/60 的
+         整数倍 ⇒ l = (world.time % (1/60)) / (1/60) ≈ 0，写回 rb.position 与写回
+         rb.interpolatedPosition 只差 1–2%，落在 D 期全部阈值之内 —— 171 条断言无一能捕获。
+         真实 rAF 是变步长的，l 扫满 [0,1)，而 cannon 0.6.2 全库从不写 previousPosition，
+         于是 interpolatedPosition = position × (1 + l)（原点缩放，实测 1.978×），飞行中的
+         箱被画到店外天空里。本条用确定性抖动帧长复现之。
+         【鉴别力守卫 vsGap】夹具必须真的把 interpolatedPosition 与 position 拉开，否则
+         「写回 position」与「写回 interpolatedPosition」在数值上无从区分（空断言）。 */
+      var vsBox = G.world.spawnBox('d_water', { x: 6.0, z: 4.0 });
+      var vsOk = false, vsDetail = '无箱';
+      if (vsBox && vsBox.rb) {
+        vsBox.rb.position.set(6.0, 1.6, 4.0);
+        vsBox.rb.wakeUp();
+        vsBox.rb.velocity.set(1.2, 3.0, -0.8);
+        vsBox.rb.angularVelocity.set(2, 3, 1);
+        /* 帧长 = 1/60 的 {0.7,1.3,0.9,1.5,1.1} 倍循环（≈ 40–90fps 的真实抖动），确定性、无随机 */
+        var vsMul = [0.7, 1.3, 0.9, 1.5, 1.1];
+        var vsDrift = 0, vsGap = 0, vsk;
+        for (var vsi = 0; vsi < 40; vsi++) {
+          G.physics.update(vsMul[vsi % vsMul.length] / 60);
+          vsk = Math.sqrt(
+            Math.pow(vsBox.mesh.position.x - vsBox.rb.position.x, 2) +
+            Math.pow(vsBox.mesh.position.y - vsBox.rb.position.y, 2) +
+            Math.pow(vsBox.mesh.position.z - vsBox.rb.position.z, 2));
+          if (vsk > vsDrift) vsDrift = vsk;
+          vsk = Math.sqrt(
+            Math.pow(vsBox.rb.interpolatedPosition.x - vsBox.rb.position.x, 2) +
+            Math.pow(vsBox.rb.interpolatedPosition.y - vsBox.rb.position.y, 2) +
+            Math.pow(vsBox.rb.interpolatedPosition.z - vsBox.rb.position.z, 2));
+          if (vsk > vsGap) vsGap = vsk;
+        }
+        vsOk = vsDrift < 1e-9 && vsGap > 0.5;
+        vsDetail = '40 帧内 mesh 与 rb.position 最大偏差 ' + vsDrift +
+          '（须 <1e-9）；同期 interpolatedPosition 与 rb.position 最大偏差 ' +
+          round2(vsGap) + 'm（守卫：须 >0.5，证明夹具确实拉开了两者）';
+      }
+      ck('physics.meshFollowsBodyVarStep', vsOk, '变步长下 mesh 必须逐字跟随 rb.position：' + vsDetail);
+      if (vsBox) G.world.destroyBox(vsBox);
 
       ck('shadow.rendererState', !renderer ||
         (renderer.shadowMap.enabled === !!G.tex.on && (!G.tex.on || renderer.shadowMap.type === THREE.PCFSoftShadowMap)),
@@ -1173,6 +1219,63 @@
       if (pbox2) G.world.destroyBox(pbox2);
       ck('cust.knockdownPatienceRuns', Math.abs(pc2.patience - 2.85) < 0.05,
         '倒地 2.85s 期间 patience 增量 ' + round2(pc2.patience) + '（应 ≈2.85，证明 stepState 照常推进）');
+
+      /* --- D-V1 连带面：变步长下的整条砸倒链路（everRagdoll 回归）--- */
+      /* 上面这一族 knockdown 断言全部由 makeKnockBox 手摆 b.mesh.position，没有一条经过
+         physics.update 的写回。D-V1 之前写回的是 rb.interpolatedPosition = rb.position×(1+l)，
+         而 findKnockBox / stepAvoid 读的正是 b.mesh.position —— 真机变步长下箱 mesh 被甩到
+         几米外，实测 everRagdoll:false，整个 T4 在真机上是死的。本条走完整链路。
+         【相位夹具】l = (world.time % (1/60)) / (1/60)。固定步长下 l≈0（这就是旧断言全绿的
+         原因）。这里先用一帧不规则帧长（rAF 每帧都在发生）把相位挪到 l≈0.5，之后按 1/60
+         推进相位保持不变；此时若写回插值位置，箱 mesh 会被甩开 l×|rb.position| ≈ 3.6m，
+         远超命中半径 r = 0.22×dims.w + 0.13 + 0.30 ≤ 0.67m，必然砸不中。
+         守卫 evMinGap 钉住「夹具真的处在这个相位上」，否则本条是空断言。
+         走廊 x=6.0、z∈[−6,6] 是本文件既有 knockdown/dodge 夹具已验证的空地。 */
+      function interpPhaseGap(rb) {
+        return Math.sqrt(
+          Math.pow(rb.interpolatedPosition.x - rb.position.x, 2) +
+          Math.pow(rb.interpolatedPosition.y - rb.position.y, 2) +
+          Math.pow(rb.interpolatedPosition.z - rb.position.z, 2));
+      }
+      var evC = G.customers._test.spawnOne();
+      evC.mesh.position.set(6.0, 0, 4.0);
+      evC.mesh.rotation.y = 0;
+      var evBox = G.world.spawnBox('f_noodle', { x: 6.0, z: 2.4 });
+      var evRag = false, evMinGap = Infinity, evHitFrame = -1, evDetail = '无箱';
+      if (evBox && evBox.rb) {
+        evBox.rb.position.set(6.0, 1.0, 2.4);
+        evBox.rb.wakeUp();
+        evBox.rb.velocity.set(0, 0, 5.0);
+        for (var evi = 0; evi < 40; evi++) {
+          var evDt = 1 / 60;
+          if (evi === 1) {
+            /* 相位对齐：interpolatedPosition = position×(1+l) ⇒ l = gap / |position|。
+               本帧多走 (0.5 − l) 个物理步即把相位置于 0.5（+1 取正余数）。 */
+            var evMag = Math.sqrt(
+              evBox.rb.position.x * evBox.rb.position.x +
+              evBox.rb.position.y * evBox.rb.position.y +
+              evBox.rb.position.z * evBox.rb.position.z);
+            var evL0 = evMag > 1e-6 ? interpPhaseGap(evBox.rb) / evMag : 0;
+            evDt = (1 + ((1.5 - evL0) % 1)) / 60;
+          }
+          G.physics.update(evDt);
+          G.customers._test.stepOne(evC, evDt);
+          if (!evRag) {
+            if (evi >= 2) {
+              var evG = interpPhaseGap(evBox.rb);
+              if (evG < evMinGap) evMinGap = evG;
+            }
+            if (evC.ragdoll) { evRag = true; evHitFrame = evi; }
+          }
+        }
+        evDetail = '被砸=' + evRag + '（第 ' + evHitFrame + ' 帧）；命中前每一帧 ' +
+          'interpolatedPosition 与真值的偏差 ≥ ' + round2(evMinGap) +
+          'm（守卫：须 >1.34 = 2×命中半径上界 0.67，证明写回插值位置必然打空）';
+      }
+      ck('cust.knockdownUnderVarStep', evRag && evMinGap > 1.34,
+        '变步长下经 physics.update 写回的 mesh 必须仍能砸倒顾客：' + evDetail);
+      if (evBox) G.world.destroyBox(evBox);
+      G.customers._test.remove(evC);
 
       /* --- D-T5 局部绕行（spec §8；侧移改为 carrier 式，见计划 Task 5 的偏离说明）--- */
       var dc = G.customers._test.spawnOne();

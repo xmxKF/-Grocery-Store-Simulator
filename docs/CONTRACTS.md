@@ -105,7 +105,8 @@ G.physics.syncStatics()           // 按 G.world.colliders 全量重建静态刚
                                   // 【唯一真相源】引擎静态刚体一律由此生成，绝不手写第二份几何表
                                   // 【收尾唤醒全部动态箱体】cannon 的 needBroadphaseCollision 对「双方都不是醒着的动态体」返回 false，
                                   // static ↔ sleeping dynamic 同样被跳过：新建的静态体压住睡箱就永久嵌死。断言 physics.newColliderWakesBoxes
-G.physics.update(dt)              // world.step(1/60, dt, 10)，然后把全部 loose 箱的 interpolatedPosition / quaternion 写回 box.mesh
+G.physics.update(dt)              // world.step(1/60, dt, 10)，然后把全部 loose 箱的 position / quaternion 写回 box.mesh
+                                  // 【D-V1 订正】原为 interpolatedPosition，那是错的（见下方红线）
 G.physics.attach(box)             // 由 mesh 当前 position/quaternion 建【动态】刚体，挂到 box.rb；幂等（先 detach）
 G.physics.attachStatic(box)       // 同上但 mass = 0（存储位用）
 G.physics.detach(box)             // 从 world 移除 box.rb，box.rb = null；幂等
@@ -309,7 +310,7 @@ G.clamp(v, a, b)
 - `belt.userData.belt`：world.js 打标（另带 `userData.registerId`）。C-T3 起 checkout 经 `G.world.registers[i].beltMesh` 直取自家台面，`userData.belt` 标记与 #4E5866 色值均不再承担 checkout 定位职责（色值红线仍在 DESIGN §5.4，属视觉契约）。
 - `userData.shell`：world.js 打标（`addShell()` 7 个调用点，满配实测 **21** 个壳体 mesh：地板 1 + 天花板 1 + 外墙 6 段 + 内隔墙 7 段 + 门框柱 4 + 东西院混凝土地面 2）、main.js 自测 shellNoCast 断言消费——壳体绝不 castShadow 的硬标记。
 - **静态刚体的单一真相源是 `G.world.colliders`**（D 期）：`G.physics.syncStatics()` 全量重建，绝不手写第二份几何表；`rebuildGraph()` 的每个调用点必须同步调 `syncStatics()`。断言 `physics.staticsMatchColliders` / `physics.staticsAfterZoneOpen`。
-- **`interpolatedQuaternion` 在本项目中禁止使用**（D 期）：cannon 0.6.2 对醒着的动态体根本不写入该字段（永远是单位四元数），失效是静默的（表现为「箱不转」）。位置写回用 `body.interpolatedPosition`，旋转写回用 `body.quaternion`。断言 `physics.noInterpolatedQuaternion` 源码级钉死。
+- **`interpolatedQuaternion` 与 `interpolatedPosition` 在本项目中一律禁止使用**（D 期立 `interpolatedQuaternion`，**D-V1 补上孪生兄弟 `interpolatedPosition`**）：cannon 0.6.2 的整条 `interpolated*` 家族对**醒着的动态体**都是坏的，且失效都是静默的。①`interpolatedQuaternion` 永远停在单位四元数（表现为「箱不转」）。②`interpolatedPosition` 的插值式是 `position + (position − previousPosition) × l`（`l = (world.time % (1/60)) / (1/60) ∈ [0,1)`），而 cannon 0.6.2 **全库从不写 `previousPosition`**（只在 `Body` 构造里 `new Vec3()`、只在 `World.step` 里被读），于是它退化成随帧长抖动的**原点缩放** `position × (1 + l)`；固定步长下 `l ≈ 0` 故误差只有 1–2%（D 期 171 条断言因此全绿），真实 rAF 变步长下实测 1.978×——飞行中的箱被画到店外天空里，且 `findKnockBox` / `stepAvoid` 读的就是这个错位置，**砸不倒顾客**。位置与旋转一律写回 `body.position` / `body.quaternion`。断言 `physics.noInterpolatedFields`（源码级）+ `physics.meshFollowsBodyVarStep` + `cust.knockdownUnderVarStep`（行为级，变步长驱动）。
 - **`G.physics.CEIL_Y − 卷帘门 collider 的 h` 必须 < 箱边长 0.45**（D 期）：门洞处墙体是断开的，关闭的卷帘门静态体只到 `h = 3.0`，其上到 `WALL_H` 的空当只由天花板 plane 压住；空当 ≥ 0.45 就能隔着关着的门往未购区域扔箱。`CEIL_Y ≥ 3.45` 即开洞。当前 `WALL_H = 3.6` 下 `physics.ceilingCaps` 恰好也在 3.45 跟着红（v0=9.0 支路 3.5682 尚绿、v0=12.0 支路 3.6245 已红），**但这是巧合，不能依赖**：`WALL_H` 一旦抬高，`ceilingCaps` 立刻放宽而本条纹丝不动（`WALL_H = 4.0` 时 `ceilingCaps` 可放行到 `CEIL_Y = 3.83`——实测 3.9714 ✓、3.84 → 4.0105 ✗——门顶空当已达 0.83 ≫ 0.45）。`CEIL_Y` 不是只被阴影视锥（spec §9.2）一条约束钉住的。断言 `physics.ceilingSealsZoneGates`。
 - **箱三态与其刚体形态一一对应**（D 期）：`held`（`G.player.carrying === box`）无刚体；`slotted`（`storageSlotOf(box) !== null`）静态刚体 `mass 0`；`loose`（其余）动态刚体。四个转移入口 `pickUpBox` / `putDownBox` / `storeBox` / `releaseThrow` 各恰好一行物理调用，另加 `spawnBox` / `takeBox` / `destroyBox` / `restoreBoxes` 四处非玩家路径。
 - **`G.customers._test.stepOne(c, dt)`**（D 期，仅供自测）：跑一名顾客的完整每帧流程（`stepKnockdown` → 非倒地时 `stepAvoid`/`stepMove`/`applyGait` → `stepState`），与 `update()` 的循环体同源同函数。
