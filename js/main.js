@@ -1827,6 +1827,9 @@
       var bxBefore = boxCensus(), dqBefore = G.shop.serializeDeliveries();
       G.save();
       var bxLoaded = G.load();
+      /* 取样必须跨过读档后的第一帧：restoreBoxes 摆完 mesh 才重建刚体，二者是否一致
+         要到 physics.update 把刚体位姿写回 mesh 那一刻才显形（元断言 selftest.assertAfterTick） */
+      G.physics.update(1 / 60);
       var bxAfter = boxCensus(), dqAfter = G.shop.serializeDeliveries();
       var bxCounts = bxAfter.storage.length === 1 && bxAfter.yard.length === 1 && bxAfter.floor.length === 1;
       var bxOk = bxLoaded === true && bxOrdered === true && bxCounts &&
@@ -1907,6 +1910,7 @@
         var flyAirborne = flyBox.mesh.position.y > 1;
         G.save();
         G.load();
+        G.physics.update(1 / 60);      // 跨过读档后的第一帧再取样（selftest.assertAfterTick）
         var flyAfter = null, flyList = G.world.allBoxes();
         for (var fbi = 0; fbi < flyList.length; fbi++) {
           if (Math.abs(flyList[fbi].mesh.position.x - 8.5) < 0.05 &&
@@ -1925,17 +1929,24 @@
       legacyRaw.boxes = [{ pid: 'f_noodle', left: 4, where: 'floor', x: 9.5, z: 3.5 }];   // 无 ry 的旧档
       localStorage.setItem('gss-save-v2', JSON.stringify(legacyRaw));
       var legacyLoaded = false, legacyBox = null, legacyThrew = false;
+      var legacyPre = NaN, legacyPost = NaN;
       try {
         legacyLoaded = G.load();
         var legList = G.world.allBoxes();
         for (var lgi = 0; lgi < legList.length; lgi++) {
           if (Math.abs(legList[lgi].mesh.position.x - 9.5) < 0.05) { legacyBox = legList[lgi]; break; }
         }
+        /* 与 save.boxOrientation 同一道理（元断言 selftest.assertAfterTick 守）：读档后的
+           第一帧 physics.update 会把 rb.quaternion 无条件写回 mesh，只验 load 完那一瞬的
+           mesh 是空断言——刚体姿态若没跟着旧档降级走，偏航会在下一帧被静默改写。两刻都取。 */
+        if (legacyBox) legacyPre = legacyBox.mesh.rotation.y;
+        G.physics.update(1 / 60);
+        if (legacyBox) legacyPost = new THREE.Euler().setFromQuaternion(legacyBox.mesh.quaternion, 'YXZ').y;
       } catch (lge) { legacyThrew = true; }
       ck('save.boxOrientationLegacy',
-        legacyLoaded === true && !legacyThrew && !!legacyBox && legacyBox.mesh.rotation.y === 0,
+        legacyLoaded === true && !legacyThrew && !!legacyBox && legacyPre === 0 && Math.abs(legacyPost) < 0.01,
         '无 ry 字段的旧档：load=' + legacyLoaded + '，抛异常=' + legacyThrew +
-        '，rotation.y=' + (legacyBox ? legacyBox.mesh.rotation.y : 'n/a'));
+        '，rotation.y=' + legacyPre + '，走一帧 physics.update 后 ' + round2(legacyPost));
 
       /* D-T7（T6 审查 I1）：读档产生的【重叠箱】必须能自行分开。夹具全走真实可达路径——
          serializeBoxes 把玩家手上那只按【玩家脚下坐标】入档（world.js「手上那只按脚下
@@ -2325,6 +2336,44 @@
          满配最坏场景，提前销毁会让总提交数少数 48 次（主 pass 24 + 阴影 pass 24）。
          自测到此结束，之后无人再依赖场上箱数。 */
       for (var cbj = 0; cbj < capBoxes.length; cbj++) G.world.destroyBox(capBoxes[cbj]);
+
+      /* ---- 元断言：堵「断言取样早于游戏自己观测该量」这类空洞断言 ----
+         D 期出现四次「加粗的 MUST 却没有断言能红」，共同根因不是忘做变异验证，而是
+         【取样时刻早于游戏第一次观测该量的时刻】。T6 最干净地暴露它：断言在 G.load()
+         返回后立刻读 mesh，而游戏第一次观测发生在下一帧 physics.update 把刚体位姿
+         写回 mesh 之后——正确与错误实现在「载入完成」那一瞬逐位相同，沿用同一取样点的
+         变异验证会一起绿。
+         口径 = runSelftest 自身源码（runSelftest.toString()；file:// 下不能 XHR 读自身
+         文件，本项目无构建步骤，源码即所写）。
+         规则：每个 G.load() / restoreBoxes( 调用点与其后【第一条 ck(】之间，若该段读了
+         .mesh.position / .mesh.rotation / .mesh.quaternion / .rb.，则其间必须先出现
+         G.physics.update( 或 _test.stepOnce()。
+         为什么不是「所有读档一律要求跨帧」：调用点里绝大多数只观测纯 state（钱 / 天数 /
+         等级 / 价签 / load 返回值），这些量在 load 返回时就是终值，硬塞一帧 physics.update
+         只会把规则做成仪式、并往存档迁移断言里掺无关的状态推进。限定在「观测箱位姿」上，
+         规则才是可执行的，且恰好覆盖真实失效面。
+         【本条自身的盲区】：只看 runSelftest 的源码文本，够不着 ck() 里调的辅助函数
+         （如 boxCensus）内部的 mesh 读取——那类调用点须由作者自觉跨帧。 */
+      /* 先剥注释：本条自己的注释里就写着 G.load() 与 .mesh.position，不剥的话规则会去
+         扫散文、判定挂在措辞上。块注释用等长空白替换以保住行号，行注释整段丢弃。 */
+      var atSrc = runSelftest.toString()
+        .replace(/\/\*[\s\S]*?\*\//g, function (mm) { return mm.replace(/[^\n]/g, ' '); })
+        .replace(/\/\/[^\n]*/g, '');
+      var atRe = /G\.load\(\)|restoreBoxes\(/g;
+      var atBad = [], atM, atSites = 0;
+      while ((atM = atRe.exec(atSrc)) !== null) {
+        atSites++;
+        var atAfter = atSrc.slice(atM.index + atM[0].length);
+        var atCkAt = atAfter.indexOf('ck(');
+        var atSeg = (atCkAt === -1) ? atAfter : atAfter.slice(0, atCkAt);
+        if (!/\.mesh\.(position|rotation|quaternion)|\.rb\./.test(atSeg)) continue;   // 不观测箱位姿 → 不适用
+        if (atSeg.indexOf('G.physics.update(') !== -1 || atSeg.indexOf('_test.stepOnce()') !== -1) continue;
+        atBad.push(atSrc.slice(0, atM.index).split('\n').length);
+      }
+      ck('selftest.assertAfterTick', atBad.length === 0,
+        '扫描 runSelftest 源码里 ' + atSites + ' 个读档调用点：读箱位姿却没跨过一帧 ' +
+        'physics.update 的有 ' + atBad.length + ' 处' +
+        (atBad.length ? '（runSelftest 内第 ' + atBad.join(' / ') + ' 行）' : '，全部合规'));
     } catch (e) {
       runtimeErrors.push(String(e && e.stack || e));
       ck('selftest.exception', false, String(e && e.message || e));
