@@ -289,7 +289,8 @@ G.clamp(v, a, b)
 - 商品实例池：world.js 内部按 pid 维护 InstancedMesh（G.world._instPools 仅供自测），
   增删一律 rebuildProduct(pid) 全量重建；实例颜色一律走 per-pid 材质，不使用 instanceColor/setColorAt——不是能力缺失（本构建支持），而是架构必然：每个商品的 labelBand 贴图不同，材质本就必须 per-pid，instanceColor 只能合并同 (shape,accent) 组、收益不抵复杂度。
 - 上架飞行动画队列 `G.world._flights`（仅供自测）：`[{mesh, from, to, t0, slot, onDone, pid, idx}]`，`stepFlights` 自驱 rAF 消费。
-- `G.customers._test`：自测钩子（spawnOne / gait / addHand / remove），仅 ?selftest 使用。spawnOne 返回的对象带 `items` 与 `popItem`，便于验手持不变式。
+- `G.customers._test`：自测钩子（spawnOne / gait / addHand / remove / stepOne），仅 ?selftest 使用。spawnOne 返回的对象带 `items` 与 `popItem`，便于验手持不变式。
+- **顾客倒地三字段**（D-T4）：`c.ragdoll: bool`（是否倒地；`applyGait` 开头据此跳过步态，写入点只有 `stepKnockdown`）、`c.ragdollT: number`（倒地起算的秒数，单变量驱动全部姿态）、`c.ragdollDir: ±1`（`+1` 前扑 / `−1` 后仰，触发当帧按 `dot(箱速, 顾客正前方) > 0` 定死，倒地期间不再改）。三者在 `spawn()` 与 `_test.spawnOne()` 两处都必须初始化为 `false / 0 / 1`。姿态数值与时序见 DESIGN §5.7。
 - `G.world._tagStats()`（仅供自测）：`{cache: TAG_TEX, disposed: 累计 dispose 次数}`，用于钉死价签贴图缓存不泄漏。
 - **顾客手持渲染上限 6 件**（C-T7）：`addHandCube` 超过 6 件不再建 mesh，`popItem` 守不变式 `hands.children.length === min(items.length, 6)`。逻辑 `items` 不受影响（清单最多 6 条 ×2 件 = 12 件），结账金额与库存扣减照常。
 - lowfx：textures.js 是唯一读取 gss-lowfx 的模块；main.js、world.js 与 customers.js 通过 G.tex.on 判断。

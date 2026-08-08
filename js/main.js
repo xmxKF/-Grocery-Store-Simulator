@@ -1117,16 +1117,31 @@
       var kp0 = kc.mesh.position.clone();
       var kTorso0 = kc.torso.position.y;
       var kFrozen = true;
+      /* 夹具必须先「有可动的初值」，否则这条断言完全空洞：_test.spawnOne() 的顾客
+         path 为空、amp/phase 为 0，于是 stepMove 第一行 `if (!c.path.length) return;` 直接返回，
+         applyGait 的 bob = −0.03×|sin(0)|×0 恒为 0——把 stepCustomer 的 `if (!c.ragdoll)`
+         整个拆掉（连同 applyGait 开头那道 `if (c.ragdoll) return;`）也一帧不动，实测仍 158/158 全绿。
+         给它一条走得动的 path 和非零 amp/phase，「漏冻结」才有可观测后果。 */
+      kc.path = [new THREE.Vector3(6.0, 0, 5.0)];
+      kc.amp = 1;
+      kc.phase = 1;
+      var kRecover = -1, kDownPos = kp0.clone();     // kDownPos = 最后一个「仍在倒地」帧的位置
       for (var kri = 0; kri < 53; kri++) {           // 已推进 0.25s，再推进 2.65s → 合计 2.90s ≥ 2.85
         G.customers._test.stepOne(kc, 0.05);
-        if (kc.ragdoll && (kc.torso.position.y !== kTorso0 || kc.mesh.position.distanceTo(kp0) > 1e-9)) kFrozen = false;
+        /* 爬起当帧 stepKnockdown 先置 ragdoll=false，同一帧 stepMove 就恢复行走（实测 0.08m
+           = 1.6×0.05，正是想要的行为，不该浪费一帧）。所以位移判据只能取「倒地窗口内」，
+           拿爬起后的 mesh.position 去比 kp0 会把正常复走误判成被撞飞。 */
+        if (!kc.ragdoll) { kRecover = kri + 1; break; }
+        if (kc.torso.position.y !== kTorso0 || kc.mesh.position.distanceTo(kp0) > 1e-9) kFrozen = false;
+        kDownPos.copy(kc.mesh.position);
       }
       ck('cust.knockdownRecovers',
-        kc.ragdoll === false && kc.mesh.rotation.x === 0 && kc.mesh.position.distanceTo(kp0) < 1e-6,
+        kc.ragdoll === false && kc.mesh.rotation.x === 0 && kDownPos.distanceTo(kp0) < 1e-6,
         '2.9s 后 ragdoll=' + kc.ragdoll + '，rotation.x=' + kc.mesh.rotation.x +
-        '，位移 ' + kc.mesh.position.distanceTo(kp0));
+        '，倒地窗口内位移 ' + kDownPos.distanceTo(kp0) + '（爬起当帧恢复行走属正常，不计入）');
       ck('cust.ragdollFreezesGait', kFrozen,
-        '倒地期间 torso.position.y 与 mesh.position 必须一帧不动（applyGait 与 stepMove 双冻结）');
+        '倒地期间 torso.position.y 与 mesh.position 必须一帧不动（applyGait 与 stepMove 双冻结）；' +
+        '夹具已置 path/amp/phase 使漏冻结可观测，爬起于本段第 ' + kRecover + ' 帧');
 
       var hc = G.customers._test.spawnOne();
       hc.mesh.position.set(6.0, 0, -2.0);
