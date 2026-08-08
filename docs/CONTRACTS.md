@@ -32,6 +32,11 @@
 `#app`(canvas 容器) `#hud` `#hud-money` `#hud-day` `#hud-clock` `#hud-level` `#crosshair` `#charge` `#prompt` `#toast` `#screen-menu` `#screen-computer` `#screen-summary` `#pos` `#selftest`(隐藏 pre)
 （`#charge` 自 D-T3 起存在于 `index.html`；D-T0~T2 阶段该 id 尚未接入，属预写契约。）
 
+**操作表的三张活镜像（固定）：改键位必须三处同改。**
+`docs/GDD.md §12 操作表` ↔ `js/ui.js` 的 `HELP_ROWS`（主菜单操作说明，**玩家实际看到的那张**）↔ `README.md §操作表`。
+三者是同一事实的三份拷贝，**没有任何断言能守**：`file://` 下不能 XHR 读 `.md`，运行期物理上无法比对；扫 DOM 只够得着三张里的一张。
+D-T3 已实证这条会漏：T0 只改了 GDD §12，`HELP_ROWS` 与 `README.md` 都缺右键蓄力投掷一行，玩家在主菜单里将永远看不到该键位（T3 补齐）。**新增/修改任何键位时，把这三处一起列进改动清单。**
+
 ## 全局命名空间 `G`
 
 ### G.bus（state.js 提供）
@@ -250,7 +255,7 @@ G.ui.setCharge(v /*0..1 显示并设填充宽度；null 隐藏*/)   // D 期；#
     1. `--user-data-dir` 会把 `gss-lowfx` 留在 profile 里。两态必须用**各自独立**的 profile 目录并在**每次跑前 `rm -rf`**，否则正常态会静默跑成 lowfx（表现为断言总数变少、`tex.*` 整块消失）。
     2. **`&lowfx=1` URL 参数不存在。** lowfx 态只能用跳板页：一个临时 html 先 `localStorage.setItem('gss-lowfx','1')` 再 `location.replace('index.html?selftest=1')`，且必须带 `--allow-file-access-from-files`。
     3. 在受沙箱约束的 shell 里调用 headless Edge 会静默产出 0 字节 DOM（无报错）。必须在不受沙箱约束的方式下调用。
-  - 当前基线：正常态 **140/140**、lowfx **135/135**（D-T1 实测）。
+  - 当前基线：正常态 **171/171**、lowfx **166/166**（**D-T7 结项实测**；两态差 5 条 = `tex.*` 分组只在正常态求值）。
 
 ## 共享工具（state.js 提供，全模块可用）
 ```js
