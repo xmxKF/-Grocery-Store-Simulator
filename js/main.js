@@ -1900,6 +1900,47 @@
         '无 ry 字段的旧档：load=' + legacyLoaded + '，抛异常=' + legacyThrew +
         '，rotation.y=' + (legacyBox ? legacyBox.mesh.rotation.y : 'n/a'));
 
+      /* D-T7（T6 审查 I1）：读档产生的【重叠箱】必须能自行分开。夹具全走真实可达路径——
+         serializeBoxes 把玩家手上那只按【玩家脚下坐标】入档（world.js「手上那只按脚下
+         位置的地面箱存」），于是「举着 A 站在地面箱 B 旁存档 → 读档」就落出两条中心距
+         远小于箱边长的重叠记录。
+         机理：cannon 的 Broadphase.needBroadphaseCollision 对「双方都不是【醒着的动态体】」
+         直接返回 false（libs/cannon.min.js），两只睡箱进不了窄相、谁也叫不醒谁 → 永久互穿。
+         【取样点必须跨帧】：正确与错误实现在 G.load() 返回那一瞬逐位相同（都还叠着），
+         只有 physics.update 跑起来之后才分叉——沿用「load 完立刻读」的取样点必然空洞。 */
+      var boxGap = function (a, b) {
+        var gx = a.mesh.position.x - b.mesh.position.x, gz = a.mesh.position.z - b.mesh.position.z;
+        return Math.sqrt(gx * gx + gz * gz);      // 只看水平：两箱同在 y=BOX_HALF
+      };
+      var ovPose = G.player.getPose();
+      var ovGround = G.world.spawnBox('f_noodle', { x: 7.5, z: 3.5 });
+      var ovHand = G.world.spawnBox('d_water', { x: 12.0, z: 3.5 });
+      var ovPicked = false, ovD0 = -1, ovD1 = -1, ovN = 0;
+      if (ovGround && ovHand) {
+        ovPicked = G.player._test.pickUp(ovHand);
+        G.player.setPose({ x: 7.7, z: 3.5 });     // 站在地面箱旁 0.2m
+        G.save();
+        G.load();
+        var ovPair = [], ovAll = G.world.allBoxes();
+        for (var ovi = 0; ovi < ovAll.length; ovi++) {
+          var ovp = ovAll[ovi].mesh.position;
+          if (Math.abs(ovp.x - 7.6) < 0.7 && Math.abs(ovp.z - 3.5) < 0.7) ovPair.push(ovAll[ovi]);
+        }
+        ovN = ovPair.length;
+        if (ovN === 2) {
+          ovD0 = boxGap(ovPair[0], ovPair[1]);
+          for (var ovj = 0; ovj < 180; ovj++) G.physics.update(1 / 60);   // 3s
+          ovD1 = boxGap(ovPair[0], ovPair[1]);
+        }
+      }
+      ck('save.overlapBoxesSeparate',
+        ovPicked && ovN === 2 && ovD0 < 0.40 && ovD1 >= 0.42,
+        '举箱站在地面箱旁 0.2m 存档→读档（拾起=' + ovPicked + '，落档 ' + ovN +
+        ' 只）：读档瞬间两箱水平中心距 ' + round2(ovD0) + '（须 <0.40，否则夹具没造出重叠）；' +
+        '跑 3s physics.update 后 ' + round2(ovD1) + '（须 ≥0.42 ≈ 箱边长 ' +
+        round2(G.physics.BOX_HALF * 2) + '）');
+      G.player.setPose(ovPose);
+
       /* --- C-T7 治漏与上限 --- */
       for (var pi2 = 0; pi2 < 200; pi2++) G.shop.setPrice('f_noodle', 2.0 + (pi2 % 30) * 0.1);
       var ts = G.world._tagStats();

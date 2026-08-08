@@ -1318,7 +1318,7 @@
   /* 起手清场再按序重建：重复 load 不得产生重复箱或「一箱两位」。
      data 非数组（旧 v2 档无 boxes 字段）时只清场，由调用方回落 restoreStorage */
   function restoreBoxes(data) {
-    var live = allBoxes();
+    var live = allBoxes(), restored = [];
     for (var i = 0; i < live.length; i++) destroyBox(live[i]);
     if (!Array.isArray(data)) return;
     for (var d = 0; d < data.length; d++) {
@@ -1349,9 +1349,28 @@
       if (G.physics) {
         G.physics.detach(box);
         G.physics.attach(box);
-        if (box.rb) box.rb.sleep();   // 读完档满地箱不会同时醒着抢一帧
+        if (box.rb) restored.push(box);
       }
       registerBoxInteractable(box);
+    }
+    /* 读完档满地箱不该同时醒着抢一帧，故一律置休眠 —— 但【与别的箱重叠的那些不能睡】。
+       cannon 的 Broadphase.needBroadphaseCollision 对「双方都不是醒着的动态体」直接
+       返回 false：两只重叠的睡箱永远进不了窄相、谁也叫不醒谁，就此永久互穿。
+       可达路径：serializeBoxes 把玩家手上那只按脚下坐标入档，「举着 A 站在地面箱 B 旁
+       存档 → 读档」即重叠（断言 save.overlapBoxesSeparate）。
+       判据取【外接圆直径】2×BOX_HALF×√2 = 0.6364：任意偏航的两只箱中心距达到它必不重叠，
+       是往保守方向（多留几只醒着）错。留醒的那些自行推开，分开后照常自然入睡。
+       静态的仓库位箱也要算进去：静态体与睡着的动态体同样被 needBroadphaseCollision 跳过。 */
+    var clearD = 2 * Math.SQRT2 * boxHalf(), clearD2 = clearD * clearD, ri, rj;
+    var others = allBoxes();
+    for (ri = 0; ri < restored.length; ri++) {
+      var rBox = restored[ri], rp = rBox.mesh.position, overlapped = false;
+      for (rj = 0; rj < others.length; rj++) {
+        if (others[rj] === rBox || !others[rj].mesh) continue;
+        var odx = others[rj].mesh.position.x - rp.x, odz = others[rj].mesh.position.z - rp.z;
+        if (odx * odx + odz * odz < clearD2) { overlapped = true; break; }
+      }
+      if (!overlapped) rBox.rb.sleep();
     }
   }
 
