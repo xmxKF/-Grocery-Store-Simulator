@@ -973,9 +973,11 @@
       ck('physics.meshFollowsBody', mfOk, '30 帧后 mesh 必须逐字跟随 body：' + mfDetail);
       if (mfBox) G.world.destroyBox(mfBox);
 
-      /* D-V1：上面那条用固定步长 physics.update(1/60) 驱动，此时 world.time 恒为 1/60 的
-         整数倍 ⇒ l = (world.time % (1/60)) / (1/60) ≈ 0，写回 rb.position 与写回
-         rb.interpolatedPosition 只差 1–2%，落在 D 期全部阈值之内 —— 171 条断言无一能捕获。
+      /* D-V1：上面那条（meshFollowsBody）捕不到 D-V1，原因是【它的位置半边是重言式】——
+         修复前 mesh 正是从 rb.interpolatedPosition copy 来的，拿 mesh 与它自己的来源比恒为 0。
+         【不是】因为「固定步长下 l≈0」：l = (world.time % (1/60)) / (1/60) 是时钟残差，
+         固定步长只会把它冻住（实测：新钟从 0 起 l 在 0/1 之间双峰翻转、|interp−pos| 峰值
+         8.17m；先走一帧 12.3ms 再全程 1/60 则永久黏在 0.7380），绝不会把它推向 0。
          真实 rAF 是变步长的，l 扫满 [0,1)，而 cannon 0.6.2 全库从不写 previousPosition，
          于是 interpolatedPosition = position × (1 + l)（原点缩放，实测 1.978×），飞行中的
          箱被画到店外天空里。本条用确定性抖动帧长复现之。
@@ -1225,8 +1227,10 @@
          physics.update 的写回。D-V1 之前写回的是 rb.interpolatedPosition = rb.position×(1+l)，
          而 findKnockBox / stepAvoid 读的正是 b.mesh.position —— 真机变步长下箱 mesh 被甩到
          几米外，实测 everRagdoll:false，整个 T4 在真机上是死的。本条走完整链路。
-         【相位夹具】l = (world.time % (1/60)) / (1/60)。固定步长下 l≈0（这就是旧断言全绿的
-         原因）。这里先用一帧不规则帧长（rAF 每帧都在发生）把相位挪到 l≈0.5，之后按 1/60
+         【相位夹具】l = (world.time % (1/60)) / (1/60) 是时钟残差，固定步长只会把它冻在
+         当前值上（冻在哪取决于此前的帧长历史），不保证任何特定值，更不会趋零 —— 旧断言全绿
+         与 l 无关，见上面那族 knockdown 的「全程零次 physics.update」。这里先用一帧不规则
+         帧长（rAF 每帧都在发生）把相位显式挪到 l≈0.5，之后按 1/60
          推进相位保持不变；此时若写回插值位置，箱 mesh 会被甩开 l×|rb.position| ≈ 3.6m，
          远超命中半径 r = 0.22×dims.w + 0.13 + 0.30 ≤ 0.67m，必然砸不中。
          守卫 evMinGap 钉住「夹具真的处在这个相位上」，否则本条是空断言。

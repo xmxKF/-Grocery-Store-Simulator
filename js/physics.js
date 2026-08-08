@@ -10,18 +10,46 @@
 //         l = (world.time % (1/60)) / (1/60) ∈ [0, 1)
 //     而 cannon 0.6.2 全库【从不写 previousPosition】（只在 Body 构造里 new Vec3() 初始化，
 //     只在 World.step 里被读），于是它恒为 (0,0,0)，插值式退化成 position × (1 + l)——
-//     一个随帧长抖动的【原点缩放】，不是平滑。固定步长下 l≈0 故误差只有 1–2%（这就是 D 期
-//     171 条断言全绿的原因，它们全用 physics.update(1/60) 驱动）；真实 rAF 的变步长下
-//     l 扫满 [0,1)，实测 interpolatedPosition / position 达 1.978——飞行中的箱被画到店外
-//     天空里，且 customers 的 findKnockBox / stepAvoid 读的就是这个错位置，砸不倒顾客。
+//     一个随帧长抖动的【原点缩放】，不是平滑。真实 rAF 的变步长下 l 扫满 [0,1)，实测
+//     interpolatedPosition / position 达 1.978——飞行中的箱被画到店外天空里，且 customers
+//     的 findKnockBox / stepAvoid 读的就是这个错位置，砸不倒顾客。
 //     D-V1 实测（浏览器 + 纯 Node require('cannon.min.js') 双路复现）。
+// 【订正 · l 不会因固定步长而趋零】本注释与 D-V1 修复报告曾写「固定步长下 l≈0，误差只有
+//   1–2%，这就是 171 条断言全绿的原因」——这是错的，且是有害的错。l 是 world.time 对 1/60
+//   取模得到的【时钟残差】，固定步长只会把它【冻住】，冻在哪取决于时钟起点与此前的帧长
+//   历史，绝不会把它推向 0。复审实测三组：
+//     · 浏览器 physics.update(1/60) 驱动 30 帧 → l = [0,0,1,1,1,…,1,0,0,…] 双峰翻转，
+//       |interpolated − position| 峰值 8.17 m；
+//     · 纯 Node 新钟从 0 起 → 同样的 0/1 双峰翻转；
+//     · 纯 Node 先走一帧 12.3 ms 再全程 1/60 → l 永久黏在 0.7380。
+//   视觉验收当时量到的 0.014–0.022 只是那一次会话的残差，不是规律。误差可以偏 100%。
+// 【171 条断言全绿的真正原因是结构性的，与 l 是多少无关】
+//   ① physics.meshFollowsBody 的【位置半边是重言式】——修复前 mesh 正是从那个字段 copy
+//      来的，它拿 mesh 与「mesh 自己被 copy 的来源」比，恒为 0；
+//   ② D-T4 那一整族击倒断言【全是手摆 mesh】——makeKnockBox 里直接 b.mesh.position.set(…)，
+//      六个调用点（cust.knockdown / slowBoxNoKnockdown / knockdownKeepsHands /
+//      knockdownPatienceRuns / knockdownRecovers / ragdollFreezesGait）的驱动循环里
+//      G.physics.update 出现 0 次，箱 mesh 从落位那刻起就没再动过。它们把「箱能砸倒人」
+//      验成了「给定箱 mesh 在这个坐标上，倒地姿态状态机对不对」，从未覆盖「箱 mesh 会不会
+//      真的到那个坐标」——而后者才是玩家体验到的功能。
+//   【教训】断言若不经过产品的真实数据通路（这里是 physics.update 的写回），验的就不是
+//   玩家体验到的东西。固定步长自测绿 ≠ 真机对，两者之间没有 1–2% 这种安全边际。
 // 位置与旋转一律写回 body.position / body.quaternion（= 最近一次物理步的真值）。
 // 【为什么不自己维护 previousPosition 来把平滑补回来】：update() 走的是
 //   world.step(FIXED_STEP, dt, MAX_SUB_STEPS)，一次调用内跑 0..MAX_SUB_STEPS 个内部步，
 //   正确的 previousPosition 必须是【最后一个内部步之前】的位置（cannon 原设计是在
 //   internalStep 里记），而在模块层只拿得到「本次 step 之前」的位置。用后者按 l 插值在
-//   0 个和 2 个内部步的帧上都会外推/滞后，比不插值更糟。60Hz 物理 + ≥60fps 渲染下多数帧
-//   本就是 1:1，直接用 position 的抖动不可见。要真做平滑得先接管 internalStep，另案。
+//   0 个和 2 个内部步的帧上都会外推/滞后——【但「比不插值更糟」只在低帧率成立】：复审实测
+//   ≥50fps 上最坏值与不插值持平（0.148 / 0.151），均值反而好一个数量级（0.005 vs 0.041）；
+//   只有 30/20fps 稳定时才真的更糟（最坏 0.303 / 0.305 vs 0.155 / 0.154）。
+// 【订正 · 真要做平滑不必接管 internalStep，更不必改 vendor】正确做法是速度外推：
+//   mesh.position = rb.position + rb.velocity × (l × FIXED_STEP)。零新增状态、不碰 vendor、
+//   不读任何 interpolated* 字段，复审实测与「cannon 原意的理想平滑」偏差 0.0000 m
+//   （60/50/30/20fps 全部）。真正的动机不是掉帧抖动，而是 120Hz 屏：子步分布 {0:30, 1:30}，
+//   一半的帧箱完全不动，飞行物在高刷屏上看着像 60Hz 卡格；低帧率（30/20fps 稳定）反而不
+//   需要插值（子步恒 2–3、运动均匀无 judder），非整数比（50fps）才是最坏 judder 场景。
+//   本项目 60Hz 物理 + ≥60fps 渲染下多数帧本就是 1:1，直接用 position 的抖动不可见，暂不做；
+//   挂在 D-V1 修复报告 §6 #1。
 // 自测断言 physics.noInterpolatedFields 扫描 _test.src()，而 src() 返回下面这个具名
 // 函数表达式 physicsModule 的 toString()。
 // 【扫描面】= 该 IIFE 的函数体全文——常量区、模块顶层代码、全部具名/匿名函数与它们
