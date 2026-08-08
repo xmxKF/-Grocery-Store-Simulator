@@ -1226,8 +1226,9 @@
   /* 彻底销毁一只箱：交互体 + 场景挂载 + 自有几何/材质（贴图是共享缓存，不 dispose） */
   function destroyBox(box) {
     if (!box || !box.mesh) return;
-    /* 刚体必须与 mesh 同生共死：丢垃圾桶 / restoreBoxes 起手清场 / boxHardCap 回收三条路径
-       都会走到这里，漏掉就在 cannon world 里留下永不清除、仍参与 broadphase 的孤儿刚体 */
+    /* 刚体必须与 mesh 同生共死：restoreBoxes 起手清场是唯一的生产销毁路径，
+       漏掉就在 cannon world 里留下永不清除、仍参与 broadphase 的孤儿刚体（实测 45 个）。
+       注意 player.discardBox 不走这里（spec §11 #8 挂账），它丢的箱必为 held、rb 已 detach。 */
     if (G.physics) G.physics.detach(box);
     var slot = storageSlotOf(box);
     if (slot) slot.box = null;

@@ -562,7 +562,7 @@
       ck('world.storageStore', stOk === true && stSlot.box === stBox &&
         Math.abs(stBox.mesh.position.x - stSlot.pos.x) < 0.01, '放箱入位');
       var back = G.world.takeBox(stSlot);
-      ck('world.storageTake', back === stBox && stSlot.box === null, '取箱出位');
+      ck('world.storageTake', back === stBox && stSlot.box === null && back.rb === null, '取箱出位');
       // 序列化往返
       G.world.storeBox(stSlot, stBox);
       var stData = G.world.serializeStorage();
@@ -925,8 +925,11 @@
           slotStaticOk = slotDrift < 1e-6;
         }
       }
+      /* 鉴别力在 type === STATIC 那个分支守卫上：休眠动态体方案下 type 仍是 DYNAMIC，
+         整段被跳过、slotDrift 停在 -1 而红。位移恒为 0 是结构性的（静态体不积分、
+         applyImpulse 对 invMass=0 是空操作、stepOnce 不写 mesh），不是被验出来的。 */
       ck('physics.slottedIsStatic', slotStaticOk,
-        'slotted 箱须为 STATIC 且 50N 冲量 + 60 步后不离位，实测位移 ' + slotDrift);
+        'slotted 箱须为 STATIC（受冲量与 60 步积分后位移恒 0），实测位移 ' + slotDrift);
 
       var dBefore = G.physics._test.bodyCount();
       var dRb = pbox ? pbox.rb : null;

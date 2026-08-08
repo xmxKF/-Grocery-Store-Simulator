@@ -137,6 +137,7 @@ G.world.registers   // [{index, mesh, beltMesh, front:Vector3, queueSpots:[Vecto
 G.world.storageSlots // [{id:'st0'..'st23', pos:Vector3, marker:Mesh, box:null|箱}]（C-T4；仓库购买后建造，24 位 = 6 列 × 4 排地面标记）
 G.world.storeBox(slot, box) /*->bool*/  G.world.takeBox(slot) /*->box|null*/   // C-T4
 // takeBox 只解绑不搬箱（mesh 留在原位），调用方负责重新定位；storeBox 起手先解绑该箱的旧位，杜绝「一箱两位」
+// takeBox 返回的箱处于「无刚体」的移交态（rb === null），调用方必须在同一 tick 内以 storeBox / attach / pickUpBox 之一定案——这是三态不变式的唯一显式例外
 G.world.releaseStorageOf(box)   // C-T4；按 box 反查并清空所占存储位（玩家直接搬起存储位上的箱时由 player 调用）
 G.world.serializeStorage() /*->[{id,pid,left}]*/  G.world.restoreStorage(data)   // C-T4；restore 靠 slot.id 匹配，必须在 buildZone('W') 之后调用；存档已改走 serializeBoxes，此对仅供旧 v2 档回落与自测
 G.world.allBoxes() /*->[box]*/   // C-终审；场上全部箱实体 = 交互体表里的箱 + G.player.carrying（举箱时交互体被摘除）；总数上限/序列化/清场的单一枚举
