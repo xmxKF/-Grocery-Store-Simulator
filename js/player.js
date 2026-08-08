@@ -17,6 +17,9 @@
   var THROW_V_MAX = 9.0;      // 硬上界 12.0（cannon 0.6.2 无 CCD，防隧穿），取 25% 余量
   var THROW_SPIN_MIN = 1.5;
   var THROW_SPIN_MAX = 7.0;
+  /* 出手点前伸量的回退档：首档 0.6 与 syncCarriedBox 同值（空旷处出手点一字不变），
+     贴墙时逐档回退到箱体不再压在任何静态 collider 上。见 throwOffset 的成因说明。 */
+  var THROW_OFFSETS = [0.6, 0.45, 0.30, 0.15, 0];
 
   function CONFIG() { return G.data.CONFIG; }
 
@@ -390,6 +393,37 @@
     setChargeUI(null);
   }
 
+  /* 箱体 AABB（半边长取 physics 的 BOX_HALF，不另抄一份）是否压在某条静态 collider 上。
+     collider 竖直范围是 0..h（省略 h 视为 WALL_H，与 physics.syncStatics 同口径），
+     必须按高度过滤：否则 h=0.6 的垃圾桶/地面标记会把齐胸高的出手点误判成挡住。 */
+  function boxFitsAt(x, y, z) {
+    var colliders = (G.world && G.world.colliders) || [];
+    var r = G.physics.BOX_HALF;
+    var defH = (G.world && G.world.WALL_H) || 3.6;
+    for (var i = 0; i < colliders.length; i++) {
+      var c = colliders[i];
+      var h = (typeof c.h === 'number' && c.h > 0) ? c.h : defH;
+      if (h <= y - r) continue;
+      if (x + r > c.minX && x - r < c.maxX && z + r > c.minZ && z - r < c.maxZ) return false;
+    }
+    return true;
+  }
+
+  /* 出手点必须留在静态 collider 的己侧。玩家最近只能站到距墙中面 0.55m（PLAYER_RADIUS 0.35
+     + collider 半厚 0.2），而出手点前伸 0.6×cos(pitch)：|pitch| < 23.6° 时 0.6×cos > 0.55，
+     箱心就生成在墙/卷帘门的另一侧。cannon 的 findSeparatingAxis 取最小穿透轴（薄墙是水平向），
+     求解器于是把箱推到墙外侧，再加上初速直接飞走 —— 与蓄力大小无关（1.5 m/s 照穿）、
+     与天花板和隧穿都无关。逐档回退前伸量，取第一个箱体不压在任何 collider 上的档位。 */
+  function throwOffset() {
+    for (var i = 0; i < THROW_OFFSETS.length; i++) {
+      var d = THROW_OFFSETS[i];
+      if (boxFitsAt(camera.position.x + _camDir.x * d,
+                    camera.position.y + _camDir.y * d - 0.35,
+                    camera.position.z + _camDir.z * d)) return d;
+    }
+    return 0;   // 全档都被压住（已陷在碰撞体内）：退回相机水平位置
+  }
+
   function releaseThrow() {
     var carrying = G.player.carrying;
     var speed = throwSpeed(), spinMax = throwSpinMax();
@@ -400,6 +434,11 @@
     // 起点 = 松手瞬间箱心的当前位置，与 syncCarriedBox 逐字同式（玩家看到的是「手上那只直接飞出去」）
     syncCarriedBox();
     camera.getWorldDirection(_camDir);
+    var off = throwOffset();
+    if (off !== THROW_OFFSETS[0]) {
+      carrying.mesh.position.copy(camera.position).addScaledVector(_camDir, off);
+      carrying.mesh.position.y -= 0.35;
+    }
     G.player.carrying = null;
     if (G.world && G.world.registerBoxInteractable) G.world.registerBoxInteractable(carrying);
     if (G.physics && G.physics.throwBox) {

@@ -255,6 +255,7 @@
     throwBox: throwBox,
     looseBoxes: looseBoxes,
     CEIL_Y: CEIL_Y,
+    BOX_HALF: BOX_HALF,   // player.releaseThrow 钳出手点要用；不得在别处再抄一份 0.225
     _test: {
       bodyCount: function () { return world ? world.bodies.length : 0; },
       staticCount: function () { return staticBodies.length + planeCount; },

@@ -1166,6 +1166,11 @@
           if (Math.abs(got - want) > 1e-6) curveOk = false;
         });
         G.player._test.charge(0);
+        /* 数值本身也要守：curveTrace 的 want 是拿 throwConsts() 自己的 vMin/vMax 算的，
+           只测形状不测数值，vMax 改成 20 照绿。THROW_V_MAX 的硬上界 12.0（cannon 0.6.2 无 CCD）
+           与 25% 余量后的 9.0 是 spec §6.3 的绑定数值，调高必须先重跑 physics.noTunneling。 */
+        if (!(tc.vMax <= 9.0 && tc.chargeFull === 0.8)) curveOk = false;
+        curveTrace.push('vMax=' + tc.vMax + '（须 ≤9.0）chargeFull=' + tc.chargeFull + '（须 0.8）');
       }
       ck('player.chargeCurve', curveOk, curveTrace.join(' ') || '缺 _test.throwConsts');
 
@@ -1178,14 +1183,59 @@
         want.y -= 0.35;
         G.player._test.charge(0.4);
         withRandom(0.5, function () { G.player._test.throwNow(); });
+        /* CONTRACTS：registerBoxInteractable 必须在松手当帧完成、不等落地。漏掉这一条，
+           箱会变成捡不起来的幽灵，而坐标 / 刚体 / carrying 那三项仍然全绿。 */
+        var toReg = false;
+        for (var ti = 0; ti < G.world.interactables.length; ti++) {
+          var tie = G.world.interactables[ti];
+          if (tie.type === 'box' && tie.data && tie.data.box === toBox) { toReg = true; break; }
+        }
         toOk = toBox.mesh.position.distanceTo(want) < 1e-6 && !!toBox.rb &&
-          toBox.rb.type === CANNON.Body.DYNAMIC && G.player.carrying === null;
+          toBox.rb.type === CANNON.Body.DYNAMIC && G.player.carrying === null && toReg;
         toDetail = '箱心 ' + round2(toBox.mesh.position.x) + ',' + round2(toBox.mesh.position.y) + ',' +
           round2(toBox.mesh.position.z) + ' / 期望 ' + round2(want.x) + ',' + round2(want.y) + ',' + round2(want.z) +
-          '，距差 ' + toBox.mesh.position.distanceTo(want);
+          '，距差 ' + toBox.mesh.position.distanceTo(want) + '，松手当帧已登记交互体=' + toReg;
       }
       ck('player.throwOrigin', toOk, '出手起点须与 syncCarriedBox 同式：' + toDetail);
       if (toBox) G.world.destroyBox(toBox);
+
+      /* 出手点不得越过任何静态 collider 的中面：玩家最近只能站到距中面 0.55m（PLAYER_RADIUS 0.35
+         + 半厚 0.2），而出手点前伸 0.6×cos(pitch)，|pitch| < 23.6° 时箱心生成在墙的另一侧，
+         求解器按最小穿透轴把它推到墙外再加初速飞走 —— 最轻的 1.5 m/s 也照穿，能把箱送进未购区，
+         或穿实心外墙扔到店外永久失联（仍占 BOX_HARD_CAP、按 where:'floor' 进存档跨天存活）。
+         与蓄力大小、天花板、隧穿全都无关，本 task 之前的 17 条断言无一能捕获。 */
+      var wcWall = null;
+      for (var wi = 0; wi < G.world.colliders.length; wi++) {
+        var wcc = G.world.colliders[wi];
+        if (Math.abs((wcc.minZ + wcc.maxZ) / 2 + 10) < 1e-6 && wcc.maxX - wcc.minX > 30) { wcWall = wcc; break; }
+      }
+      var wcPose = G.player.getPose();
+      var wcOk = !!wcWall, wcTrace = [];
+      if (wcWall) {
+        var wcMid = (wcWall.minZ + wcWall.maxZ) / 2;      // 南外墙中面 z = -10
+        var wcStand = wcWall.maxZ + 0.35;                 // 贴到不能再近：z = -9.55
+        [0, 0.8].forEach(function (wct) {
+          var wb = G.world.spawnBox('h_tissue', { x: 0, z: -8 });
+          if (!wb || !G.player._test.pickUp(wb)) { wcOk = false; wcTrace.push('t=' + wct + ' 无箱'); return; }
+          G.player.setPose({ x: (wcWall.minX + wcWall.maxX) / 2, z: wcStand, yaw: 0, pitch: 0 });   // 平视朝 -z
+          G.player._test.charge(wct);
+          var wcV = G.player._test.peekThrow().speed;
+          G.player._test.throwNow();
+          var wcOrigin = wb.rb.position.z, wcMin = wcOrigin, ws;
+          for (ws = 0; ws < 120; ws++) {
+            G.physics.update(1 / 60);
+            if (wb.rb.position.z < wcMin) wcMin = wb.rb.position.z;
+          }
+          if (wcMin <= wcMid) wcOk = false;
+          wcTrace.push('v0=' + round2(wcV) + ' 出手z=' + round2(wcOrigin) +
+            ' 全程最小z=' + round2(wcMin) + ' 末z=' + round2(wb.rb.position.z));
+          G.world.destroyBox(wb);
+        });
+      }
+      G.player.setPose(wcPose);
+      ck('player.throwNoWallClip', wcOk,
+        wcWall ? ('站位 z=-9.55 平视扔向中面 z=-10 的南外墙，箱心须全程留在己侧（z > -10）：' +
+          wcTrace.join(' | ')) : '找不到南外墙 collider');
 
       /* 蓄力仲裁：准星指向任何类型都不影响蓄力；左键既有行为不受影响、可与右键同时生效；
          中途失效（全屏界面）取消蓄力且箱仍在手上 */
@@ -1258,12 +1308,16 @@
       var barOk = !!barEl && !!barEl.firstChild;
       var barDetail = barEl ? '' : '缺 #charge 节点';
       if (barOk) {
+        // 前一条断言末尾的 _test.charge(0) 已把 #charge 置成 block：不先归零，
+        // 「setCharge 让它显示」这一半就是空断言（只剩宽度在守）
+        barEl.style.display = 'none';
         G.ui.setCharge(0.5);
-        var barVis = barEl.style.display !== 'none' && barEl.firstChild.style.width === '60px';
+        var barShown = barEl.style.display, barW = barEl.firstChild.style.width;
+        var barVis = barShown !== 'none' && barW === '60px';
         G.ui.setCharge(null);
         var barHid = barEl.style.display === 'none';
         barOk = barVis && barHid;
-        barDetail = 'charge=0.5 时 display=' + barEl.style.display + ' 宽 ' + barEl.firstChild.style.width +
+        barDetail = 'charge=0.5 时 display=' + barShown + ' 宽 ' + barW +
           '（应 60px）；setCharge(null) 后 display=' + barEl.style.display;
       }
       ck('ui.chargeBar', barOk, barDetail);
