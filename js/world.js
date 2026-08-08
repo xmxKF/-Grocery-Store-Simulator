@@ -1223,6 +1223,35 @@
     return (G.physics && typeof G.physics.BOX_HALF === 'number') ? G.physics.BOX_HALF : 0.225;
   }
 
+  /* 读档落位：存档只记 (x, z)，y 按「落地平放」一律丢弃（serializeBoxes 的口径）。
+     但 D-T1 起 collider 带了高度——收银台 h=1.08，箱能稳稳停在台面上（y=1.305）。
+     照直在 y=BOX_HALF 生成，那只箱就诞生在收银台【内部】，而 restoreBoxes 收尾还会
+     让它 sleep()，从此永久嵌死（睡着的动态体与静态体进不了窄相，见 physics.syncStatics）。
+     判据只看落点中心在不在 collider 的水平矩形内：箱能停在某条 collider 上，其中心必在
+     矩形内（重心要落在支撑面里）；中心在矩形外的（贴着货架侧面站在地上）本来就是合法
+     静止姿态，不该动它。
+     返回 { y: 落位高度, unstable: 该落位不是合法静止姿态 }。unstable 只在下面那条
+     「抬不上去」的分支为真——抬到顶面的箱与躺在地上的箱同性质，照常 sleep 即可，
+     多留它醒着既无收益也无断言能红（实测：撤掉不 sleep 而保留抬高，173 条全绿）。 */
+  function landingAt(x, z) {
+    var half = boxHalf(), maxTop = 0, i;
+    for (i = 0; i < colliders.length; i++) {
+      var c = colliders[i];
+      if (x < c.minX || x > c.maxX || z < c.minZ || z > c.maxZ) continue;
+      var h = G.physics ? G.physics.heightOf(c) : 0;
+      if (h > maxTop) maxTop = h;
+    }
+    if (!(maxTop > 0)) return { y: half, unstable: false };
+    /* 顶面 + 一个箱边长顶穿天花板的高 collider（墙 3.6 / 卷帘门 3.0）：抬上去只是从
+       嵌在墙里换成嵌在天花板里。回落地面高度，并标记 unstable —— 这个落位确实在静态体
+       【内部】，睡下去就永久嵌死（睡着的动态体与静态体进不了窄相）；保持醒着让求解器
+       把它顶出来是唯一还能自愈的姿态。正常玩法存不出这种档（箱停不到墙顶上），
+       但坏档/手改档是真实输入，断言 save.boxInsideWallEscapes 守这条分支。 */
+    var ceilY = (G.physics && G.physics.CEIL_Y) || 3.4;
+    if (maxTop + 2 * half > ceilY) return { y: half, unstable: true };
+    return { y: maxTop + half, unstable: false };
+  }
+
   /* 箱交互体的唯一登记入口：提示带当前剩余件数，并保证「一 mesh 一交互体」 */
   function registerBoxInteractable(box) {
     var prod = G.data.productById(box.productId);
@@ -1293,10 +1322,15 @@
     var euler = new THREE.Euler();
     for (var i = 0; i < list.length; i++) {
       var box = list[i], slot = storageSlotOf(box);
-      /* 所有箱一律按「落地平放」口径存档：y 恒 0.225 不入档、姿态只取偏航。
-         俯仰与翻滚丢弃 → 任何存档状态都对应一个合法静止姿态，读档必不穿地、
-         不需要额外字段，与 putDownBox / storeBox 现有的 rotation.set(0, yaw, 0) 同口径。
-         飞行中的箱天然走同一条规则，不需要任何特判。 */
+      /* 所有箱一律按「平放」口径存档：y 不入档、姿态只取偏航。俯仰与翻滚丢弃，
+         与 putDownBox / storeBox 现有的 rotation.set(0, yaw, 0) 同口径；飞行中的箱
+         天然走同一条规则，不需要任何特判。
+         【y 不入档不等于读档一律落在 y=BOX_HALF】——D-T1 起 collider 带高度，箱可以
+         停在收银台（h=1.08）或货架顶（h=1.8）上，那样的落点必须由读侧按 collider 顶面
+         还原（restoreBoxes → landingAt），否则箱在台面/货架【内部】生成。D 期终审实测
+         过这个洞：扔上收银台 → 打烊 → 次日 → 继续，箱永久嵌在台里。
+         不变式的正确表述是：【存档的 (x, z) + 读侧 landingAt 推出的 y】对应一个合法
+         静止姿态，读档必不穿地、也必不嵌进静态体。y 本身仍不需要入档。 */
       var ry = euler.setFromQuaternion(box.mesh.quaternion, 'YXZ').y;
       if (slot) {
         /* storage 记录不带 ry：storeBox 无条件 rotation.set(0,0,0)，写出来恒为字面 0，
@@ -1318,7 +1352,7 @@
   /* 起手清场再按序重建：重复 load 不得产生重复箱或「一箱两位」。
      data 非数组（旧 v2 档无 boxes 字段）时只清场，由调用方回落 restoreStorage */
   function restoreBoxes(data) {
-    var live = allBoxes(), restored = [];
+    var live = allBoxes(), restored = [], restUnstable = [];
     for (var i = 0; i < live.length; i++) destroyBox(live[i]);
     if (!Array.isArray(data)) return;
     for (var d = 0; d < data.length; d++) {
@@ -1346,10 +1380,13 @@
       updateBoxVisual(box);
       // 旧档无 ry → 0（与现状完全一致）；先摆姿态再重建刚体，否则刚体姿态与 mesh 不一致
       box.mesh.rotation.set(0, (typeof rec.ry === 'number' && isFinite(rec.ry)) ? rec.ry : 0, 0);
+      // 落点压在 collider 上就抬到它的顶面（spawnBox 一律给 y=BOX_HALF），同样先摆后建刚体
+      var land = landingAt(at.x, at.z);
+      box.mesh.position.y = land.y;
       if (G.physics) {
         G.physics.detach(box);
         G.physics.attach(box);
-        if (box.rb) restored.push(box);
+        if (box.rb) { restored.push(box); restUnstable.push(land.unstable); }
       }
       registerBoxInteractable(box);
     }
@@ -1360,7 +1397,11 @@
        存档 → 读档」即重叠（断言 save.overlapBoxesSeparate）。
        判据取【外接圆直径】2×BOX_HALF×√2 = 0.6364：任意偏航的两只箱中心距达到它必不重叠，
        是往保守方向（多留几只醒着）错。留醒的那些自行推开，分开后照常自然入睡。
-       静态的仓库位箱也要算进去：静态体与睡着的动态体同样被 needBroadphaseCollision 跳过。 */
+       静态的仓库位箱也要算进去：静态体与睡着的动态体同样被 needBroadphaseCollision 跳过。
+       【箱↔静态 collider 是同一张真值表的另一半】landingAt 判为 unstable 的落位（落点在
+       墙/卷帘门这种抬不上去的高 collider 内部）同样不能睡：静态体与睡着的动态体一样被
+       needBroadphaseCollision 跳过，睡下去就永久嵌在墙里。抬到收银台/货架顶面的那些
+       不在此列——那已经是合法静止姿态，与躺在地上同性质。 */
     var clearD = 2 * Math.SQRT2 * boxHalf(), clearD2 = clearD * clearD, ri, rj;
     var others = allBoxes();
     for (ri = 0; ri < restored.length; ri++) {
@@ -1370,7 +1411,7 @@
         var odx = others[rj].mesh.position.x - rp.x, odz = others[rj].mesh.position.z - rp.z;
         if (odx * odx + odz * odz < clearD2) { overlapped = true; break; }
       }
-      if (!overlapped) rBox.rb.sleep();
+      if (!overlapped && !restUnstable[ri]) rBox.rb.sleep();
     }
   }
 

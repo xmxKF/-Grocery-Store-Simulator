@@ -116,6 +116,21 @@
       world.addBody(body);
       staticBodies.push(body);
     }
+    /* 【收尾必须唤醒全部动态箱体】cannon 0.6.2 的 Broadphase.needBroadphaseCollision 对
+       「双方都不是【醒着的动态体】」直接返回 false —— static ↔ sleeping dynamic 这一格
+       与 sleeping ↔ sleeping 一样被跳过。刚建出来的静态体若压住一只睡着的箱，两者永远
+       进不了窄相、谁也叫不醒谁，箱就永久嵌在货架/冷藏柜里。
+       可达路径：地上睡着的箱 + 买生鲜许可证 → levelup/license → onLayoutChanged →
+       syncLayout → 本函数重建出压住它的静态体 → 10s 后整只吞进货架（D 期终审实测）。
+       唤醒是安全的：没被压住的箱只是多醒 0.6s（SLEEP_TIME）就自然回睡。
+       【不得复用 looseBoxes()】它返回的是共用的 looseScratch，而本函数经 bus 的
+       levelup/license → onLayoutChanged 可在任意时刻被调到，包括 update() 正持有
+       looseScratch 做写回循环的当口。自己遍历 allBoxes()，零跨函数别名。 */
+    var boxes = (G.world && G.world.allBoxes) ? G.world.allBoxes() : [];
+    for (i = 0; i < boxes.length; i++) {
+      var rb = boxes[i].rb;
+      if (rb && rb.type === CANNON.Body.DYNAMIC) rb.wakeUp();
+    }
   }
 
   function update(dt) {

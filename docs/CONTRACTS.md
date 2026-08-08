@@ -103,6 +103,8 @@ G.physics.init()                  // 建 CANNON.World（gravity (0,-9.82,0)、Na
                                   // 【必须在 G.world.init(scene) 之前调用】——world.init 会走到 rebuildGraph → syncStatics
 G.physics.syncStatics()           // 按 G.world.colliders 全量重建静态刚体（先清后建）；地/天花板 plane 不参与重建。
                                   // 【唯一真相源】引擎静态刚体一律由此生成，绝不手写第二份几何表
+                                  // 【收尾唤醒全部动态箱体】cannon 的 needBroadphaseCollision 对「双方都不是醒着的动态体」返回 false，
+                                  // static ↔ sleeping dynamic 同样被跳过：新建的静态体压住睡箱就永久嵌死。断言 physics.newColliderWakesBoxes
 G.physics.update(dt)              // world.step(1/60, dt, 10)，然后把全部 loose 箱的 interpolatedPosition / quaternion 写回 box.mesh
 G.physics.attach(box)             // 由 mesh 当前 position/quaternion 建【动态】刚体，挂到 box.rb；幂等（先 detach）
 G.physics.attachStatic(box)       // 同上但 mass = 0（存储位用）
@@ -154,6 +156,8 @@ G.world.allBoxes() /*->[box]*/   // C-终审；场上全部箱实体 = 交互体
 G.world.destroyBox(box)          // C-终审；销毁一只箱（清存储位 + 摘交互体 + 出场景 + dispose 自有几何材质）
 G.world.registerBoxInteractable(box)   // D 期导出；箱交互体的唯一登记入口（起手 retire 一次，保证「一 mesh 一交互体」），投掷松手时由 player.releaseThrow 调用
 G.world.serializeBoxes() /*->[{pid,left,where:'storage'|'yard'|'floor',slotId?,x?,z?,ry?}]*/  G.world.restoreBoxes(data)   // C-终审；restore 起手清场再重建，data 非数组时只清场；必须在 buildZone('W') 之后调用
+// y 不入档：读侧按落点 (x,z) 所在 collider 的顶面还原（D 期终审 I-1）——箱可以停在收银台(h=1.08)/货架顶(h=1.8)上，
+// 照直落 y=BOX_HALF 会在台内生成并被 sleep() 永久嵌死。落点在墙/卷帘门这种「抬不上去」的高 collider 内时回落地面高度且不 sleep。
 // ry（D 期）：绕 Y 的偏航（弧度）。所有箱一律按「落地平放」口径存档——y 恒 0.225 不入档，俯仰与翻滚丢弃。旧档无 ry 视为 0，v:2 不变更。
 // ry 只出现在 where='yard'|'floor' 的记录上；`storage` 记录**不带 ry**——storeBox 无条件 rotation.set(0,0,0)，写进去也恒为字面 0，不带一个 bit 的信息（D-T7 删除）。
 G.world.WALL_H                   // 3.6；断言与文档的墙高单一真相（shadow.frustumCovers 采样高度读它）
@@ -255,7 +259,9 @@ G.ui.setCharge(v /*0..1 显示并设填充宽度；null 隐藏*/)   // D 期；#
     1. `--user-data-dir` 会把 `gss-lowfx` 留在 profile 里。两态必须用**各自独立**的 profile 目录并在**每次跑前 `rm -rf`**，否则正常态会静默跑成 lowfx（表现为断言总数变少、`tex.*` 整块消失）。
     2. **`&lowfx=1` URL 参数不存在。** lowfx 态只能用跳板页：一个临时 html 先 `localStorage.setItem('gss-lowfx','1')` 再 `location.replace('index.html?selftest=1')`，且必须带 `--allow-file-access-from-files`。
     3. 在受沙箱约束的 shell 里调用 headless Edge 会静默产出 0 字节 DOM（无报错）。必须在不受沙箱约束的方式下调用。
-  - 当前基线：正常态 **171/171**、lowfx **166/166**（**D-T7 结项实测**；两态差 5 条 = `tex.*` 分组只在正常态求值）。
+  - 当前基线：正常态 **174/174**、lowfx **169/169**（**D 期终审修复轮实测**；两态差 5 条 = `tex.*` 分组只在正常态求值）。
+  - **`runSelftest` 必须保持单体函数**（D 期终审登记）：元断言 `selftest.assertAfterTick` 用 `runSelftest.toString()` 扫描自测块源码，扫描面就是这一个函数体。把自测块拆成多个函数 / 挪进独立 IIFE，会**静默削掉**元断言的扫描面——被挪走的那些 `G.load()` 站点不再被检查，而断言本身照样绿，没有任何报警。新增自测段一律写在 `runSelftest` 体内。
+  - **本套唯一的 wall-clock 断言是 `perf.physicsStep`**，其余全为确定性结构断言。判据挂 **p50**（不是 p95：p95 取 60 样本的第 57 名，一次 GC/调度抖动就能顶穿预算，实测跑出过 p95 4.0ms 假红而同次 p50 只有 1.2ms）。一条假红把整支变成 `SELFTEST:FAIL`，会毁掉「红 = 真有事」这个前提。
 
 ## 共享工具（state.js 提供，全模块可用）
 ```js

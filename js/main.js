@@ -1989,6 +1989,128 @@
         round2(G.physics.BOX_HALF * 2) + '）');
       G.player.setPose(ovPose);
 
+      /* D-终审 I-1｜「箱 ↔ 静态 collider」——上面那条的另一半真值表。
+         needBroadphaseCollision 跳过的不止「睡箱 ↔ 睡箱」，static ↔ sleeping dynamic
+         这一格同样被跳过。两条可达路径各守一条断言：
+
+         (A) 本条 save.boxOnCounterRoundtrip：箱停在收银台面（collider h=1.08 → y=1.305）
+             → serializeBoxes 只存 (x, z) 不存 y → 读侧若照直落 y=BOX_HALF 就在【台内】
+             生成，又因「四周 0.64m 无箱」被 sleep()，从此永久嵌死。修法是读侧
+             world.landingAt 按 collider 顶面还原落位 + 压在静态体上的不 sleep。
+             玩家触发只需：扔上台面 → 按 O 打烊 → 次日（onNextDay 会 G.save()）→「继续」。
+         【取样点必须跨帧】（元断言 selftest.assertAfterTick 也要求）：真正要证的不是
+         「读档那一瞬 y 对」，而是「跑起来之后仍在台上」——错误实现的症状正是「跑 5s
+         依然一动不动地嵌在里面」，只看 load 完那一瞬会漏掉「醒着但被挤穿地板」的结局。 */
+      var ctPose = G.player.getPose();
+      var ctTop = 1.08;                                  // 收银台 collider 的 h（world.js buildRegister）
+      var ctRest = ctTop + G.physics.BOX_HALF;           // 台面上的静止高度 1.305
+      var ctX = G.world.registers[0].mesh.position.x, ctZ = 7.6;
+      var ctBox = G.world.spawnBox('f_noodle', { x: ctX, z: ctZ });
+      var ctSet = -1, ctSleep0 = -1, ctN = -1, ctY1 = -1, ctc;
+      if (ctBox) {
+        ctBox.mesh.position.y = ctRest;                  // 与「扔上台面后停住」同一姿态
+        G.physics.detach(ctBox); G.physics.attach(ctBox);
+        for (ctc = 0; ctc < 120; ctc++) G.physics.update(1 / 60);   // 2s：自行沉降并自然入睡
+        ctSet = ctBox.mesh.position.y;
+        ctSleep0 = ctBox.rb.sleepState;                  // 夹具前提：台面确实托得住且能睡着
+        G.save();
+        G.load();
+        var ctAll = G.world.allBoxes(), ctFound = null; ctN = 0;
+        for (ctc = 0; ctc < ctAll.length; ctc++) {
+          var ctp = ctAll[ctc].mesh.position;
+          if (Math.abs(ctp.x - ctX) < 0.7 && Math.abs(ctp.z - ctZ) < 0.7) { ctFound = ctAll[ctc]; ctN++; }
+        }
+        if (ctN === 1) {
+          for (ctc = 0; ctc < 180; ctc++) G.physics.update(1 / 60);   // 3s
+          ctY1 = ctFound.mesh.position.y;
+        }
+      }
+      /* 判据取【箱底相对台面的下沉量】而不是 y 本身：y 的两个结局 1.305 / 0.225 相距一整个
+         台面高度，拿 1.08 当阈值通过侧只有 1.21× 余量（纯粹因为阈值贴着台面顶）。换成下沉量
+         后阈值 0.05m ≈ 求解器允许的穿透量级，通过侧实测 ~0.000（≫20× 余量）、失败侧 1.075（21×）。 */
+      var ctSink = (ctY1 < 0) ? 99 : (ctTop - (ctY1 - G.physics.BOX_HALF));
+      var round3 = function (v) { return Math.round(v * 1000) / 1000; };
+      ck('save.boxOnCounterRoundtrip',
+        !!ctBox && ctSleep0 === 2 && Math.abs(ctSet - ctRest) < 0.05 && ctN === 1 && ctSink <= 0.05,
+        '箱停在收银台面(x=' + ctX + ', z=' + ctZ + ', collider 顶 ' + ctTop + ') 上 → 存档 → 读档：' +
+        '夹具前提 存前 y ' + round3(ctSet) + '（须 ≈' + round3(ctRest) + '）、sleepState ' + ctSleep0 +
+        '（须 2=SLEEPING，否则夹具没造出「睡在台上」）；读回 ' + ctN + ' 只；跑 3s physics.update 后 y ' +
+        round3(ctY1) + '，箱底相对台面下沉 ' + round3(ctSink) + 'm（须 ≤0.05；撤掉 landingAt 抬高实测 ' +
+        '恒 y 0.225 / 下沉 1.075 —— 整只嵌在台内且睡着，永不自愈）');
+      if (ctBox) G.player.setPose(ctPose);
+
+      /* (B) physics.newColliderWakesBoxes：不经存档的那条路。地上睡着的箱 + 新建的
+         静态 collider 压住它 → syncStatics 若不唤醒动态体，两者永进不了窄相，10s 后
+         整只吞进货架（终审实测 pos 原地不动、sleepState 恒 2）。
+         可达路径：买生鲜许可证 → bus 的 license/levelup → onLayoutChanged → syncLayout
+         → syncStatics 建出新货架/冷藏柜的静态体，全程在已开区域内。
+         夹具直接往 G.world.colliders push 一条再走真实 syncStatics（buildZone 本身就是
+         这么 push 的），测完 pop 回去 —— 不动全局区域状态，走的是同一条代码路径。 */
+      var wkAt = { x: 12.0, z: 3.5 }, wkH = 1.8;
+      var wkBox = G.world.spawnBox('f_noodle', wkAt);
+      var wkY0 = -1, wkSleep0 = -1, wkInside = true, wkPos = '';
+      if (wkBox) {
+        for (ctc = 0; ctc < 120; ctc++) G.physics.update(1 / 60);
+        wkY0 = wkBox.mesh.position.y;
+        wkBox.rb.sleep();
+        wkSleep0 = wkBox.rb.sleepState;
+        G.world.colliders.push({ minX: wkAt.x - 1.0, maxX: wkAt.x + 1.0, minZ: wkAt.z - 1.0, maxZ: wkAt.z + 1.0, h: wkH });
+        G.physics.syncStatics();
+        for (ctc = 0; ctc < 600; ctc++) G.physics.update(1 / 60);   // 10s
+        var wp = wkBox.mesh.position;
+        wkInside = Math.abs(wp.x - wkAt.x) < 1.0 && Math.abs(wp.z - wkAt.z) < 1.0 && wp.y < wkH;
+        wkPos = '(' + round2(wp.x) + ', ' + round2(wp.y) + ', ' + round2(wp.z) + ') sleepState=' + wkBox.rb.sleepState;
+        G.world.colliders.pop();
+        G.physics.syncStatics();
+        G.world.destroyBox(wkBox);
+      }
+      ck('physics.newColliderWakesBoxes',
+        !!wkBox && Math.abs(wkY0 - G.physics.BOX_HALF) < 0.02 && wkSleep0 === 2 && !wkInside,
+        '地面睡箱 y ' + round2(wkY0) + '（夹具前提须 ≈' + round2(G.physics.BOX_HALF) +
+        '）、sleepState ' + wkSleep0 + '（须 2）；push 一条 2×2×h' + wkH +
+        ' 的 collider 压住它 → syncStatics → 跑 10s 后 ' + wkPos +
+        '，仍嵌在 collider 内 = ' + wkInside + '（须 false）');
+
+      /* (C) save.boxInsideWallEscapes：landingAt 的「抬不上去」分支（unstable）。
+         落点在墙(h=3.6)/卷帘门(h=3.0)这种 collider 内部时，顶面 + 箱边长顶穿天花板，
+         抬上去只是从嵌在墙里换成嵌在天花板里，只能回落地面高度——那仍在静态体内部，
+         所以必须【不 sleep】，靠求解器把它顶出来。正常玩法存不出这种档（箱停不到墙顶
+         上），但坏档/手改档是真实输入（T6 已按 21 种档形态验过健壮性），且这是
+         landingAt 里唯一一条「读侧无法给出合法姿态」的分支，必须有断言压着。
+         夹具按 heightOf 现取一条高 collider，不写死墙的坐标（布局一改断言跟着走）。 */
+      var wlCol = null, wlc;
+      for (wlc = 0; wlc < G.world.colliders.length; wlc++) {
+        var wcc = G.world.colliders[wlc];
+        if (G.physics.heightOf(wcc) + 2 * G.physics.BOX_HALF > G.physics.CEIL_Y) { wlCol = wcc; break; }
+      }
+      var wlCx = wlCol ? (wlCol.minX + wlCol.maxX) / 2 : 0, wlCz = wlCol ? (wlCol.minZ + wlCol.maxZ) / 2 : 0;
+      var wlBox = wlCol ? G.world.spawnBox('f_noodle', { x: wlCx, z: wlCz }) : null;
+      var wlFound = null, wlSleep = -1, wlIn = true, wlPos = '';
+      if (wlBox) {
+        G.save();                                   // 不走帧，箱还在墙心 → 档里就是墙内坐标
+        G.load();
+        var wlAll = G.world.allBoxes();
+        for (wlc = 0; wlc < wlAll.length; wlc++) {
+          var wlp = wlAll[wlc].mesh.position;
+          if (Math.abs(wlp.x - wlCx) < 0.3 && Math.abs(wlp.z - wlCz) < 0.3) { wlFound = wlAll[wlc]; break; }
+        }
+        if (wlFound) {
+          wlSleep = wlFound.rb ? wlFound.rb.sleepState : -1;   // 须 0：睡着就永远出不来
+          for (wlc = 0; wlc < 300; wlc++) G.physics.update(1 / 60);   // 5s
+          var wq = wlFound.mesh.position;
+          wlIn = wq.x >= wlCol.minX && wq.x <= wlCol.maxX && wq.z >= wlCol.minZ && wq.z <= wlCol.maxZ;
+          wlPos = '(' + round2(wq.x) + ', ' + round2(wq.y) + ', ' + round2(wq.z) + ')';
+          G.world.destroyBox(wlFound);
+        }
+      }
+      ck('save.boxInsideWallEscapes',
+        !!wlBox && !!wlFound && wlSleep === 0 && !wlIn,
+        '把箱摆进高 collider(h=' + (wlCol ? round2(G.physics.heightOf(wlCol)) : -1) + ' > 天花板 ' +
+        G.physics.CEIL_Y + ' − 箱边长，抬不上去) 的中心 (' + round2(wlCx) + ', ' + round2(wlCz) +
+        ') 存档 → 读档：读回 ' + (wlFound ? '1 只' : '0 只') + '，sleepState ' + wlSleep +
+        '（须 0=AWAKE，睡着就永远顶不出来）；跑 5s 后 ' + wlPos + '，仍在墙的水平矩形内 = ' +
+        wlIn + '（须 false）');
+
       /* --- C-T7 治漏与上限 --- */
       for (var pi2 = 0; pi2 < 200; pi2++) G.shop.setPrice('f_noodle', 2.0 + (pi2 % 30) * 0.1);
       var ts = G.world._tagStats();
