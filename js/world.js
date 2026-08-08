@@ -1282,10 +1282,16 @@
     var out = [], list = allBoxes();
     var held = (G.player && G.player.carrying) || null;
     var pose = (held && G.player.getPose) ? G.player.getPose() : null;
+    var euler = new THREE.Euler();
     for (var i = 0; i < list.length; i++) {
       var box = list[i], slot = storageSlotOf(box);
+      /* 所有箱一律按「落地平放」口径存档：y 恒 0.225 不入档、姿态只取偏航。
+         俯仰与翻滚丢弃 → 任何存档状态都对应一个合法静止姿态，读档必不穿地、
+         不需要额外字段，与 putDownBox / storeBox 现有的 rotation.set(0, yaw, 0) 同口径。
+         飞行中的箱天然走同一条规则，不需要任何特判。 */
+      var ry = euler.setFromQuaternion(box.mesh.quaternion, 'YXZ').y;
       if (slot) {
-        out.push({ pid: box.productId, left: box.itemsLeft, where: 'storage', slotId: slot.id });
+        out.push({ pid: box.productId, left: box.itemsLeft, where: 'storage', slotId: slot.id, ry: ry });
         continue;
       }
       var x = box.mesh.position.x, z = box.mesh.position.z;
@@ -1294,7 +1300,7 @@
         where = 'floor';
         if (pose) { x = pose.x; z = pose.z; }
       }
-      out.push({ pid: box.productId, left: box.itemsLeft, where: where, x: x, z: z });
+      out.push({ pid: box.productId, left: box.itemsLeft, where: where, x: x, z: z, ry: ry });
     }
     return out;
   }
@@ -1328,6 +1334,13 @@
       if (!box) continue;
       box.itemsLeft = left;
       updateBoxVisual(box);
+      // 旧档无 ry → 0（与现状完全一致）；先摆姿态再重建刚体，否则刚体姿态与 mesh 不一致
+      box.mesh.rotation.set(0, (typeof rec.ry === 'number' && isFinite(rec.ry)) ? rec.ry : 0, 0);
+      if (G.physics) {
+        G.physics.detach(box);
+        G.physics.attach(box);
+        if (box.rb) box.rb.sleep();   // 读完档满地箱不会同时醒着抢一帧
+      }
       registerBoxInteractable(box);
     }
   }

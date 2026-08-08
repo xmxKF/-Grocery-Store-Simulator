@@ -1825,6 +1825,80 @@
         '连读 3 次后 body 总数 ' + G.physics._test.bodyCount() + ' = 静态 ' +
         G.physics._test.staticCount() + ' + 非 held 箱 ' + orphanNonHeld + '；其中 loose ' + orphanLoose);
 
+      /* --- D-T6 存档朝向字段 ry（spec §9.3）--- */
+      var oriBox = G.world.spawnBox('f_noodle', { x: 7.5, z: 3.5 });
+      var oriOk = false, oriDetail = '无箱';
+      if (oriBox && oriBox.rb) {
+        oriBox.mesh.rotation.set(0, 1.1, 0);
+        G.physics.detach(oriBox); G.physics.attach(oriBox); oriBox.rb.sleep();
+        var oriY0 = new THREE.Euler().setFromQuaternion(oriBox.mesh.quaternion, 'YXZ').y;
+        G.save();
+        G.load();
+        var oriAfter = null, oriList = G.world.allBoxes();
+        for (var obi2 = 0; obi2 < oriList.length; obi2++) {
+          if (Math.abs(oriList[obi2].mesh.position.x - 7.5) < 0.05 &&
+              Math.abs(oriList[obi2].mesh.position.z - 3.5) < 0.05) { oriAfter = oriList[obi2]; break; }
+        }
+        if (oriAfter) {
+          var oriPre = oriAfter.mesh.rotation.y, oriRX = oriAfter.mesh.rotation.x, oriRZ = oriAfter.mesh.rotation.z;
+          /* 落位高度读 G.physics.BOX_HALF：mesh 半边长与刚体半边长是同一个数（physics.js
+             「几何与物理零偏移」），断言里抄一份 0.225 会在该常量改动时静默失效 */
+          var oriStrict = Math.abs(oriPre - oriY0) < 0.01 &&
+            Math.abs(oriAfter.mesh.position.y - G.physics.BOX_HALF) < 1e-6 &&
+            oriRX === 0 && oriRZ === 0;
+          /* 读档后的第一帧 physics.update 会把 rb.quaternion 无条件写回 mesh（sleeping 的
+             动态体也在 looseBoxes 里）。只验刚 load 完的 mesh 是空断言：把 restoreBoxes 里的
+             rotation.set 挪到 attach 之后，rb 仍是零姿态，偏航会在第一帧被静默抹平而 166 条
+             断言全绿（实测）。本条必须跨过那一帧，才真正守住「先摆姿态再重建刚体」。 */
+          G.physics.update(1 / 60);
+          var oriPost = new THREE.Euler().setFromQuaternion(oriAfter.mesh.quaternion, 'YXZ').y;
+          oriOk = oriStrict && Math.abs(oriPost - oriY0) < 0.01;
+          oriDetail = 'ry ' + round2(oriY0) + '→' + round2(oriPre) + '，走一帧 physics.update 后 ' +
+            round2(oriPost) + '，y=' + oriAfter.mesh.position.y + '，rx=' + oriRX + '，rz=' + oriRZ;
+        } else { oriDetail = '读档后找不到该箱'; }
+      }
+      ck('save.boxOrientation', oriOk, '扔出的箱只存偏航、读档一律平放：' + oriDetail);
+
+      var flyBox = G.world.spawnBox('d_water', { x: 8.5, z: 3.5 });
+      var flyOk = false, flyDetail = '无箱';
+      if (flyBox && flyBox.rb) {
+        flyBox.mesh.position.set(8.5, 1.6, 3.5);
+        flyBox.rb.position.set(8.5, 1.6, 3.5);
+        flyBox.rb.wakeUp();
+        flyBox.rb.velocity.set(0, 3, 0);
+        var flyAirborne = flyBox.mesh.position.y > 1;
+        G.save();
+        G.load();
+        var flyAfter = null, flyList = G.world.allBoxes();
+        for (var fbi = 0; fbi < flyList.length; fbi++) {
+          if (Math.abs(flyList[fbi].mesh.position.x - 8.5) < 0.05 &&
+              Math.abs(flyList[fbi].mesh.position.z - 3.5) < 0.05) { flyAfter = flyList[fbi]; break; }
+        }
+        if (flyAfter && flyAfter.rb) {
+          flyOk = flyAirborne && Math.abs(flyAfter.mesh.position.y - G.physics.BOX_HALF) < 1e-6 &&
+            flyAfter.rb.sleepState === CANNON.Body.SLEEPING;
+          flyDetail = '存档前 y=1.6（空中=' + flyAirborne + '），读档后 y=' + flyAfter.mesh.position.y +
+            '，sleepState=' + flyAfter.rb.sleepState + '（SLEEPING=' + CANNON.Body.SLEEPING + '）';
+        } else { flyDetail = '读档后找不到该箱或无刚体'; }
+      }
+      ck('save.inFlightBoxLands', flyOk, '空中的箱读档后静止落地：' + flyDetail);
+
+      var legacyRaw = JSON.parse(localStorage.getItem('gss-save-v2'));
+      legacyRaw.boxes = [{ pid: 'f_noodle', left: 4, where: 'floor', x: 9.5, z: 3.5 }];   // 无 ry 的旧档
+      localStorage.setItem('gss-save-v2', JSON.stringify(legacyRaw));
+      var legacyLoaded = false, legacyBox = null, legacyThrew = false;
+      try {
+        legacyLoaded = G.load();
+        var legList = G.world.allBoxes();
+        for (var lgi = 0; lgi < legList.length; lgi++) {
+          if (Math.abs(legList[lgi].mesh.position.x - 9.5) < 0.05) { legacyBox = legList[lgi]; break; }
+        }
+      } catch (lge) { legacyThrew = true; }
+      ck('save.boxOrientationLegacy',
+        legacyLoaded === true && !legacyThrew && !!legacyBox && legacyBox.mesh.rotation.y === 0,
+        '无 ry 字段的旧档：load=' + legacyLoaded + '，抛异常=' + legacyThrew +
+        '，rotation.y=' + (legacyBox ? legacyBox.mesh.rotation.y : 'n/a'));
+
       /* --- C-T7 治漏与上限 --- */
       for (var pi2 = 0; pi2 < 200; pi2++) G.shop.setPrice('f_noodle', 2.0 + (pi2 % 30) * 0.1);
       var ts = G.world._tagStats();
