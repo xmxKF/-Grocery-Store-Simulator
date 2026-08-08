@@ -250,9 +250,11 @@
       if (box) G.world.storeBox(slot, box);
     }
     for (i = 0; i < DEV_BOX_PIDS.length; i++) G.world.spawnBox(DEV_BOX_PIDS[i]);   // 无参 = 卸货区空位
-    // 店内地面：进门正前方、R3 台前 1.4m，捡起来就能往传送带上扔
-    G.world.spawnBox('f_chips', { x: 10, z: 5.6 });
-    G.world.spawnBox('d_cola', { x: 11.2, z: 5.6 });
+    /* 店内地面：进门（15.2, 5.3）正前方两三步，捡起来转身就能往 R3 传送带上扔。
+       刻意避开三条排队列 x = -2 / 4 / 10（QUEUE_ZS 4.8~6.3）：落在队列列上的箱营业时
+       会被顾客持续规避/绊倒，把「测排队结账」搅成噪声 */
+    G.world.spawnBox('f_chips', { x: 12.4, z: 6.6 });
+    G.world.spawnBox('d_cola', { x: 13.4, z: 6.6 });
   }
 
   function devPreload() {
@@ -2685,7 +2687,33 @@
         localStorage.getItem('gss-save-v2') === realV2 && localStorage.getItem('gss-save-v1') === realV1,
         'dev 键已删；真实键仍在 v2=' + String(localStorage.getItem('gss-save-v2')).length +
         'B / v1=' + String(localStorage.getItem('gss-save-v1')).length + 'B');
+
+      /* ui 的「继续」在 dev 模式下只认 dev 档：两把真实档非空也不得让它亮。
+         判据取【玩家实际看到的那颗按钮】（showScreen('menu') → updateContinueState → hasSave），
+         不看模块私有键表——只断言键表内容够不着这条路径，而 ui.js 那侧一旦回归，
+         整套断言可以一条都不红。 */
+      function continueDisabled() {
+        var btns = document.getElementById('screen-menu').getElementsByTagName('button');
+        for (var bi = 0; bi < btns.length; bi++) {
+          if (btns[bi].textContent === '继续') return btns[bi].hasAttribute('disabled');
+        }
+        return null;
+      }
+      G.ui.showScreen('menu');
+      var devContOff = continueDisabled();     // dev 模式 + 只有 v2/v1 → 必须灰
+      localStorage.setItem('gss-save-dev', '{"v":2,"money":1}');
+      G.ui.showScreen('menu');
+      var devContOn = continueDisabled();      // dev 模式 + dev 档在 → 必须亮（正控）
+      localStorage.removeItem('gss-save-dev');
       devTest.setDevMode(false);
+      G.ui.showScreen('menu');
+      var realCont = continueDisabled();       // 常规模式 + 同样两把真实档 → 必须亮（正控）
+      G.ui.showScreen(null);
+      ck('dev.uiContinueOnlyDevKey',
+        devContOff === true && devContOn === false && realCont === false,
+        'dev 模式下只有 v2/v1 时「继续」灰=' + devContOff +
+        '；补上 dev 档后亮=' + (devContOn === false) +
+        '；常规模式下同样这两把真实档亮=' + (realCont === false) + '（后两项为正控）');
 
       // ?dev=1 与 ?selftest=1 同时出现的裁定：selftest 优先，dev 被忽略
       ck('dev.selftestWins',

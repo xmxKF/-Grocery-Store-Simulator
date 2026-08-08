@@ -31,8 +31,12 @@
   ];
 
   // CONTRACTS.md 固定存档 key，仅用于「继续」按钮可用性判断；v1 仍算有档（G.load 会迁移）。
-  // dev 模式（?dev=1）只看独立键：真实档的存在与否不得让开发模式的「继续」亮起来
-  var SAVE_KEYS = G.DEV ? ['gss-save-dev'] : ['gss-save-v2', 'gss-save-v1'];
+  // dev 模式（?dev=1）只看独立键：真实档的存在与否不得让开发模式的「继续」亮起来。
+  // 现算而不在加载时定死：自测靠 G._test.setDevMode 切 G.DEV，定死就把这条路径挡在断言
+  // 射程之外（实证：SAVE_KEYS 写死成两把真实键时，整套断言一条都不红）
+  function saveKeys() {
+    return G.DEV ? ['gss-save-dev'] : ['gss-save-v2', 'gss-save-v1'];
+  }
 
   /* ---------- 模块状态 ---------- */
   var screens = {};      // name -> #screen-* 元素
@@ -64,8 +68,9 @@
 
   function hasSave() {
     try {
-      for (var i = 0; i < SAVE_KEYS.length; i++) {
-        if (localStorage.getItem(SAVE_KEYS[i])) return true;
+      var keys = saveKeys();
+      for (var i = 0; i < keys.length; i++) {
+        if (localStorage.getItem(keys[i])) return true;
       }
       return false;
     } catch (e) { return false; }

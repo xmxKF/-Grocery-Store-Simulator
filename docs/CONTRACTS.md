@@ -86,13 +86,19 @@ G.save(); G.load() /*->bool*/; G.resetSave()
 - 以上三条**只描述常规模式**。dev 模式（`?dev=1`）下 `save/load/resetSave` 整体改指 `gss-save-dev`，且不走 v1 分流、`resetSave()` 只删自己那把键，见下段。
 ```js
 G.DEV                       // boolean，加载时按 URL 定死；?dev=1 且不带 selftest 时为 true
-G._test                     // 自测钩子：devFromSearch(search)/setDevMode(on)/saveKey()，仅 ?selftest 使用
+G._test                     // 自测钩子：devFromSearch(search)/setDevMode(on)/saveKey()
+// 【G._test 只在 ?selftest 下定义，生产态是 undefined】：它能重定向存档键归属，生产态挂着它，
+// 玩家在 console 敲一次 setDevMode(true)，此后所有 G.save()（含日结自动保存）就静默改写
+// gss-save-dev、v2 停止更新且无任何提示。
+// setDevMode(on) 必须同时写 G.DEV —— ui.js / main.js 读的是 G.DEV，不同步就把
+// 「G.DEV → 存档键归属」整段挡在断言射程之外（实证：ui.js 那侧回归时一条断言都不红）。
 ```
 
 ### 开发者入口 `?dev=1`（state.js + main.js）
 纯开发者工具，**不是玩法**：把「玩家已满足全部等级 / 许可证门槛」的状态直接摆好，省掉前期爬坡。门槛判断一条不改。
-- 载入的全开状态（`main.js devPreload()`，仅在非自测的 `?dev=1` 下调用一次，在 `showScreen('menu')` 之前）：Lv10 / xp 3200 / ¥50000 / 四证齐（食品·饮料·日用品·生鲜）/ 三区全开（**必须走 `G.world.buildZone()`**，`W → B → C`，顺序同 `G.load`）/ R1~R3 由 buildRegister 置 owned / 120 格位全灌满（冷藏柜只放生鲜，经 `restoreShelves` 批量灌）/ 10 只箱（仓库位 4、卸货区 4、店内地面 2 只落在 R3 台前 `(10, 5.6)`、`(11.2, 5.6)`）。
-- **不变式：dev 模式一个字节都不写真实存档键。** `SAVE_KEY` 改指 `gss-save-dev`；`load()` 在 dev 档缺席时**直接返回 false，绝不回落 `gss-save-v1`**（回落一次就把玩家的旧档迁移掉了）；`resetSave()` 只删 `gss-save-dev`；`ui.js` 的「继续」按钮在 dev 模式下只看 `gss-save-dev`。守这条的断言：`dev.saveNeverTouchesRealKeys` / `dev.loadNoV1Fallback` / `dev.resetSaveOnlyDevKey`（判据为真实键**逐字节未变**，非「键还在」）。
+- 载入的全开状态（`main.js devPreload()`，仅在非自测的 `?dev=1` 下调用一次，在 `showScreen('menu')` 之前）：Lv10 / xp 3200 / ¥50000 / 四证齐（食品·饮料·日用品·生鲜）/ 三区全开（**必须走 `G.world.buildZone()`**，`W → B → C`，顺序同 `G.load`）/ R1~R3 由 buildRegister 置 owned / 120 格位全灌满（冷藏柜只放生鲜，经 `restoreShelves` 批量灌）/ 10 只箱（仓库位 4、卸货区 4、店内地面 2 只落在进门正前方 `(12.4, 6.6)`、`(13.4, 6.6)`）。
+  - 地面箱**刻意避开三条排队列 `x = -2 / 4 / 10`**（`QUEUE_ZS` 4.8~6.3）：落在队列列上的箱营业时会被顾客持续规避 / 绊倒，把「测排队结账」搅成噪声。改这两个坐标时一并核对这条。
+- **不变式：dev 模式一个字节都不写真实存档键。** `SAVE_KEY` 改指 `gss-save-dev`；`load()` 在 dev 档缺席时**直接返回 false，绝不回落 `gss-save-v1`**（回落一次就把玩家的旧档迁移掉了）；`resetSave()` 只删 `gss-save-dev`；`ui.js` 的「继续」按钮在 dev 模式下只看 `gss-save-dev`（`saveKeys()` 每次现算，不在加载时定死——定死就把这条路径挡在断言射程之外）。守这条的断言：`dev.saveNeverTouchesRealKeys` / `dev.loadNoV1Fallback` / `dev.resetSaveOnlyDevKey` / `dev.uiContinueOnlyDevKey`（前三条判据为真实键**逐字节未变**，非「键还在」；末条取玩家实际看到的那颗按钮的 disabled 态，不看模块私有键表）。
 - **`?dev=1` 与 `?selftest=1` 同时出现：selftest 优先，dev 被忽略**（`devFromSearch` 见 selftest 即返回 false）。理由：自测断言按默认开局状态写死（`boot.state` 等），预置全开状态会让它们整片变红。断言 `dev.selftestWins`。
 - 自测块的 localStorage 快照保护覆盖**三把键**（含 `gss-save-dev`），否则自测会污染玩家的开发模式存档。
 
@@ -272,7 +278,7 @@ G.ui.setCharge(v /*0..1 显示并设填充宽度；null 隐藏*/)   // D 期；#
     1. `--user-data-dir` 会把 `gss-lowfx` 留在 profile 里。两态必须用**各自独立**的 profile 目录并在**每次跑前 `rm -rf`**，否则正常态会静默跑成 lowfx（表现为断言总数变少、`tex.*` 整块消失）。
     2. **`&lowfx=1` URL 参数不存在。** lowfx 态只能用跳板页：一个临时 html 先 `localStorage.setItem('gss-lowfx','1')` 再 `location.replace('index.html?selftest=1')`，且必须带 `--allow-file-access-from-files`。
     3. 在受沙箱约束的 shell 里调用 headless Edge 会静默产出 0 字节 DOM（无报错）。必须在不受沙箱约束的方式下调用。
-  - 当前基线：正常态 **181/181**、lowfx **176/176**（`?dev=1` 入口并入后实测；两态差 5 条 = `tex.*` 分组只在正常态求值）。
+  - 当前基线：正常态 **182/182**、lowfx **177/177**（`?dev=1` 入口并入后实测；两态差 5 条 = `tex.*` 分组只在正常态求值）。
   - **`runSelftest` 必须保持单体函数**（D 期终审登记）：元断言 `selftest.assertAfterTick` 用 `runSelftest.toString()` 扫描自测块源码，扫描面就是这一个函数体。把自测块拆成多个函数 / 挪进独立 IIFE，会**静默削掉**元断言的扫描面——被挪走的那些 `G.load()` 站点不再被检查，而断言本身照样绿，没有任何报警。新增自测段一律写在 `runSelftest` 体内。
   - **本套唯一的 wall-clock 断言是 `perf.physicsStep`**，其余全为确定性结构断言。判据挂 **p50**（不是 p95：p95 取 60 样本的第 57 名，一次 GC/调度抖动就能顶穿预算，实测跑出过 p95 4.0ms 假红而同次 p50 只有 1.2ms）。一条假红把整支变成 `SELFTEST:FAIL`，会毁掉「红 = 真有事」这个前提。
 

@@ -273,13 +273,19 @@
   };
 
   /* 自测钩子：dev 模式在模块初始化时按 URL 定死，而自测页永远不是 dev 模式（selftest 优先），
-     故断言「dev 模式不写真实存档键」只能靠这个钩子切换存档键归属。仅 ?selftest 使用。 */
-  G._test = {
-    devFromSearch: devFromSearch,
-    setDevMode: function (on) {
-      DEV = !!on;
-      SAVE_KEY = DEV ? SAVE_KEY_DEV : SAVE_KEY_V2;
-    },
-    saveKey: function () { return SAVE_KEY; }
-  };
+     故断言「dev 模式不写真实存档键」只能靠这个钩子切换存档键归属。
+     【必须只在 ?selftest 下暴露】生产态挂着它，玩家在 console 敲一次 setDevMode(true)，
+     此后所有 G.save()（含日结自动保存）就静默改写 gss-save-dev、v2 停止更新，且无任何提示。 */
+  if (String(location.search || '').indexOf('selftest') !== -1) {
+    G._test = {
+      devFromSearch: devFromSearch,
+      setDevMode: function (on) {
+        DEV = !!on;
+        SAVE_KEY = DEV ? SAVE_KEY_DEV : SAVE_KEY_V2;
+        // ui.js 与 main.js 读的是 G.DEV，不同步就把「G.DEV → 存档键归属」整段挡在断言射程之外
+        G.DEV = DEV;
+      },
+      saveKey: function () { return SAVE_KEY; }
+    };
+  }
 })();
