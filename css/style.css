@@ -67,6 +67,7 @@ body {
 #hud-clock,
 #hud-level,
 #crosshair,
+#charge,
 #prompt,
 #toast {
   position: fixed;
@@ -161,6 +162,26 @@ body {
   background: rgba(255, 255, 255, .6);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
   transition: width 120ms ease-out, height 120ms ease-out, background-color 120ms ease-out;
+}
+
+/* 蓄力力度条：与 #hud-level 的 XP 条同规格（DESIGN §3），不引入新视觉语言 */
+#charge {
+  top: 50%;
+  left: 50%;
+  margin-top: 28px;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+  display: none;
+}
+#charge > div {
+  height: 100%;
+  width: 0;
+  background: var(--accent-2);
+  border-radius: 2px;
 }
 
 #prompt {

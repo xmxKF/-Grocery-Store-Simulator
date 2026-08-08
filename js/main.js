@@ -1153,6 +1153,127 @@
         typeof G.player.getPose === 'function' && typeof G.player.setPose === 'function' && !!G.player.camera,
         '缺 getPose/setPose/camera');
 
+      /* --- D-T3 蓄力投掷（spec §6）--- */
+      var tc = G.player._test.throwConsts ? G.player._test.throwConsts() : null;
+      var curveOk = !!tc, curveTrace = [];
+      if (tc) {
+        [0, 0.4, 0.8, 1.5].forEach(function (ct) {
+          G.player._test.charge(ct);
+          var got = G.player._test.peekThrow().speed;
+          var k = Math.min(ct / tc.chargeFull, 1);
+          var want = tc.vMin + (tc.vMax - tc.vMin) * k;
+          curveTrace.push('t=' + ct + '→' + round2(got) + '/' + round2(want));
+          if (Math.abs(got - want) > 1e-6) curveOk = false;
+        });
+        G.player._test.charge(0);
+      }
+      ck('player.chargeCurve', curveOk, curveTrace.join(' ') || '缺 _test.throwConsts');
+
+      var toBox = G.world.spawnBox('h_tissue', { x: 6.0, z: 4.0 });
+      var toOk = false, toDetail = '无箱';
+      if (toBox && G.player._test.pickUp(toBox)) {
+        var camDir = new THREE.Vector3();
+        G.player.camera.getWorldDirection(camDir);
+        var want = G.player.camera.position.clone().addScaledVector(camDir, 0.6);
+        want.y -= 0.35;
+        G.player._test.charge(0.4);
+        withRandom(0.5, function () { G.player._test.throwNow(); });
+        toOk = toBox.mesh.position.distanceTo(want) < 1e-6 && !!toBox.rb &&
+          toBox.rb.type === CANNON.Body.DYNAMIC && G.player.carrying === null;
+        toDetail = '箱心 ' + round2(toBox.mesh.position.x) + ',' + round2(toBox.mesh.position.y) + ',' +
+          round2(toBox.mesh.position.z) + ' / 期望 ' + round2(want.x) + ',' + round2(want.y) + ',' + round2(want.z) +
+          '，距差 ' + toBox.mesh.position.distanceTo(want);
+      }
+      ck('player.throwOrigin', toOk, '出手起点须与 syncCarriedBox 同式：' + toDetail);
+      if (toBox) G.world.destroyBox(toBox);
+
+      /* 蓄力仲裁：准星指向任何类型都不影响蓄力；左键既有行为不受影响、可与右键同时生效；
+         中途失效（全屏界面）取消蓄力且箱仍在手上 */
+      var arbBox = G.world.spawnBox('f_noodle', { x: 6.0, z: 3.0 });
+      var arbOk = !!arbBox, arbDetail = '';
+      if (arbBox && G.player._test.pickUp(arbBox)) {
+        var arbTypes = ['shelfSlot', 'computer', 'register', 'shutter', 'storage', 'trash', null];
+        for (var ai = 0; ai < arbTypes.length; ai++) {
+          var ent = null;
+          if (arbTypes[ai]) {
+            for (var aj = 0; aj < G.world.interactables.length; aj++) {
+              if (G.world.interactables[aj].type === arbTypes[ai]) { ent = G.world.interactables[aj]; break; }
+            }
+          }
+          G.player._test.charge(0);
+          G.player._test.setHover(ent);
+          G.player._test.setRmb(true);
+          G.player._test.stepCharge(0.4);
+          if (Math.abs(G.player._test.chargeState().charge - 0.5) > 1e-6) {
+            arbOk = false; arbDetail = '准星指 ' + arbTypes[ai] + ' 时蓄力 ' + G.player._test.chargeState().charge;
+            break;
+          }
+        }
+        // 左键连续上架与右键蓄力同时生效
+        var arbSlotEnt = null;
+        for (var ak = 0; ak < G.world.interactables.length; ak++) {
+          var ake = G.world.interactables[ak];
+          if (ake.type === 'shelfSlot' && ake.data.slot.fridge === false &&
+              (ake.data.slot.productId === null || ake.data.slot.productId === 'f_noodle') &&
+              ake.data.slot.count < 4) { arbSlotEnt = ake; break; }
+        }
+        if (arbSlotEnt) {
+          var arbCount0 = arbSlotEnt.data.slot.count, arbLeft0 = arbBox.itemsLeft;
+          G.player._test.charge(0);
+          G.player._test.resetStockCooldown();   // 前序断言可能刚上过架，冷却未走完会让本条空转
+          G.player._test.setHover(arbSlotEnt);
+          G.player._test.setRmb(true);
+          G.player._test.setMouseDown(true);
+          G.player._test.doInteractions();
+          G.player._test.stepCharge(0.4);
+          var arbStocked = arbSlotEnt.data.slot.count === arbCount0 + 1 && arbBox.itemsLeft === arbLeft0 - 1;
+          var arbCharged = Math.abs(G.player._test.chargeState().charge - 0.5) < 1e-6;
+          if (!arbStocked || !arbCharged) {
+            arbOk = false;
+            arbDetail = '左键上架=' + arbStocked + '（' + arbCount0 + '→' + arbSlotEnt.data.slot.count +
+              '），同帧右键蓄力=' + G.player._test.chargeState().charge;
+          }
+          G.player._test.setMouseDown(false);
+        } else {
+          arbOk = false; arbDetail = '找不到可上架的空格位';
+        }
+        /* 中途失效：全屏界面（'screen' 事件 → update 的 blocked 早退分支）必须取消蓄力、箱仍在手上。
+           `inRegister` 走的是同一个 blocked 判据（blocked = screenIsOpen || registerActive），
+           无头下失去指针锁定走的是第二个早退分支，两处都调 cancelCharge。 */
+        G.player._test.setRmb(true);
+        G.player._test.charge(0.4);
+        G.bus.emit('screen', { name: 'computer' });
+        G.player.update(0.05);
+        var arbCancelled = G.player._test.chargeState().charge === 0 && G.player.carrying === arbBox;
+        G.bus.emit('screen', { name: null });
+        if (!arbCancelled) { arbOk = false; arbDetail = (arbDetail ? arbDetail + '；' : '') + '全屏界面未取消蓄力'; }
+        G.player._test.setRmb(false);
+        G.player._test.charge(0);
+      } else {
+        arbOk = false; arbDetail = '拿不起测试箱';
+      }
+      ck('player.chargeArbitration', arbOk, arbDetail || '任意准星目标均可蓄力；左键上架与右键蓄力互不影响；中途失效取消蓄力');
+
+      var barEl = document.getElementById('charge');
+      var barOk = !!barEl && !!barEl.firstChild;
+      var barDetail = barEl ? '' : '缺 #charge 节点';
+      if (barOk) {
+        G.ui.setCharge(0.5);
+        var barVis = barEl.style.display !== 'none' && barEl.firstChild.style.width === '60px';
+        G.ui.setCharge(null);
+        var barHid = barEl.style.display === 'none';
+        barOk = barVis && barHid;
+        barDetail = 'charge=0.5 时 display=' + barEl.style.display + ' 宽 ' + barEl.firstChild.style.width +
+          '（应 60px）；setCharge(null) 后 display=' + barEl.style.display;
+      }
+      ck('ui.chargeBar', barOk, barDetail);
+
+      var cmEvt = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      var cmSuppressed = (canvasEl.dispatchEvent(cmEvt) === false);
+      ck('player.contextMenuSuppressed', cmSuppressed,
+        'canvas 上的 contextmenu 必须 preventDefault（dispatchEvent 返回 ' + !cmSuppressed + '）');
+      if (arbBox) { if (G.player.carrying === arbBox) G.player.carrying = null; G.world.destroyBox(arbBox); }
+
       var poseBefore = G.player.getPose ? G.player.getPose() : null;
       G.checkout.enterRegister();
       var st = G.checkout.stance;

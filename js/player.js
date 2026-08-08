@@ -11,6 +11,13 @@
   var HL_COLOR = 0xFFD666;
   var HL_INTENSITY = 0.35;
 
+  // ---- D-T3 蓄力投掷（spec §6.3 数值表；改这里必须回写 spec）----
+  var CHARGE_FULL = 0.8;
+  var THROW_V_MIN = 1.5;
+  var THROW_V_MAX = 9.0;      // 硬上界 12.0（cannon 0.6.2 无 CCD，防隧穿），取 25% 余量
+  var THROW_SPIN_MIN = 1.5;
+  var THROW_SPIN_MAX = 7.0;
+
   function CONFIG() { return G.data.CONFIG; }
 
   // ---- 模块状态 ----
@@ -35,6 +42,11 @@
   var qJustPressed = false;
   var tabJustPressed = false;
   var oJustPressed = false;
+
+  var charge = 0;
+  var rmbDown = false;
+  var rmbReleased = false;
+  var chargeShown = false;
 
   var raycaster = new THREE.Raycaster();
   var _fwd = new THREE.Vector3();
@@ -65,7 +77,24 @@
       storeInto: function (slot) {
         storeCarriedBox({ data: { slot: slot } });
         return G.player.carrying === null;
-      }
+      },
+      throwConsts: function () {
+        return { chargeFull: CHARGE_FULL, vMin: THROW_V_MIN, vMax: THROW_V_MAX,
+          spinMin: THROW_SPIN_MIN, spinMax: THROW_SPIN_MAX };
+      },
+      charge: function (tSec) { charge = G.clamp(tSec / CHARGE_FULL, 0, 1); setChargeUI(charge); return charge; },
+      chargeState: function () { return { charge: charge, rmbDown: rmbDown }; },
+      peekThrow: function () {
+        if (camera) camera.getWorldDirection(_camDir);
+        return { speed: throwSpeed(), spinMax: throwSpinMax(), dir: _camDir.clone() };
+      },
+      throwNow: function () { releaseThrow(); },
+      setRmb: function (down) { rmbDown = !!down; },
+      stepCharge: function (dt) { stepCharge(dt); },
+      setHover: function (entry) { hovered = entry || null; },
+      setMouseDown: function (down) { mouseDown = !!down; },
+      doInteractions: function () { doInteractions(); },
+      resetStockCooldown: function () { stockCooldown = 0; }
     }
   };
 
@@ -84,6 +113,7 @@
     domElement.addEventListener('click', onCanvasClick);
     domElement.addEventListener('mousedown', onMouseDown);
     domElement.addEventListener('mouseup', onMouseUp);
+    domElement.addEventListener('contextmenu', onContextMenu);
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
@@ -124,6 +154,10 @@
   }
 
   function onMouseDown(e) {
+    if (e.button === 2) {
+      if (isLocked()) rmbDown = true;
+      return;
+    }
     if (e.button !== 0) return;
     if (!isLocked()) return;
     mouseDown = true;
@@ -131,9 +165,17 @@
   }
 
   function onMouseUp(e) {
+    if (e.button === 2) {
+      if (rmbDown) rmbReleased = true;
+      rmbDown = false;
+      return;
+    }
     if (e.button !== 0) return;
     mouseDown = false;
   }
+
+  /* 指针锁定下多数浏览器已抑制右键菜单，但不得依赖：显式阻止（断言 player.contextMenuSuppressed） */
+  function onContextMenu(e) { e.preventDefault(); }
 
   function onMouseMove(e) {
     if (!isLocked()) return;
@@ -208,6 +250,7 @@
       mouseJustPressed = false;
       qJustPressed = false;
       oJustPressed = false;
+      cancelCharge();
       wasBlocked = true;
       return;
     }
@@ -236,6 +279,7 @@
       eJustPressed = false;
       mouseJustPressed = false;
       qJustPressed = false;
+      cancelCharge();
       return;
     }
 
@@ -246,6 +290,7 @@
 
     updateHover();
     doInteractions();
+    stepCharge(dt);
 
     if (stockCooldown > 0) stockCooldown -= dt;
   }
@@ -306,6 +351,64 @@
     carrying.mesh.position.copy(camera.position).addScaledVector(_camDir, 0.6);
     carrying.mesh.position.y -= 0.35;
     carrying.mesh.rotation.set(0, yaw, 0);
+  }
+
+  // ---- 蓄力与投掷 ----
+  function setChargeUI(v) {
+    if (v === null) {
+      if (!chargeShown) return;
+      chargeShown = false;
+    } else {
+      chargeShown = true;
+    }
+    if (G.ui && G.ui.setCharge) G.ui.setCharge(v);
+  }
+
+  function throwSpeed() { return THROW_V_MIN + (THROW_V_MAX - THROW_V_MIN) * charge; }
+  function throwSpinMax() { return THROW_SPIN_MIN + (THROW_SPIN_MAX - THROW_SPIN_MIN) * charge; }
+
+  function stepCharge(dt) {
+    if (rmbReleased) {
+      rmbReleased = false;
+      releaseThrow();
+      return;
+    }
+    if (!rmbDown || !G.player.carrying) {
+      if (charge !== 0) charge = 0;
+      setChargeUI(null);
+      return;
+    }
+    charge = G.clamp(charge + dt / CHARGE_FULL, 0, 1);
+    setChargeUI(charge);
+  }
+
+  /* 中途失效（inRegister / 全屏界面 / 失去指针锁定）：取消蓄力，箱留在手上 */
+  function cancelCharge() {
+    rmbDown = false;
+    rmbReleased = false;
+    charge = 0;
+    setChargeUI(null);
+  }
+
+  function releaseThrow() {
+    var carrying = G.player.carrying;
+    var speed = throwSpeed(), spinMax = throwSpinMax();
+    charge = 0;
+    rmbDown = false;
+    setChargeUI(null);
+    if (!carrying || !carrying.mesh || !camera) return;
+    // 起点 = 松手瞬间箱心的当前位置，与 syncCarriedBox 逐字同式（玩家看到的是「手上那只直接飞出去」）
+    syncCarriedBox();
+    camera.getWorldDirection(_camDir);
+    G.player.carrying = null;
+    if (G.world && G.world.registerBoxInteractable) G.world.registerBoxInteractable(carrying);
+    if (G.physics && G.physics.throwBox) {
+      G.physics.throwBox(carrying, _camDir, speed, {
+        x: G.rand(-spinMax, spinMax),
+        y: G.rand(-spinMax, spinMax),
+        z: G.rand(-spinMax, spinMax)
+      });
+    }
   }
 
   // ---- 射线检测 / 高亮 / 提示 ----

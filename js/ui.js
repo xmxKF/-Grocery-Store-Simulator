@@ -24,6 +24,7 @@
     ['鼠标', '视角'],
     ['E / 左键', '交互：捡箱 / 上架 1 件 / 开电脑 / 进收银台 / 丢箱 / 扫码'],
     ['Q', '放下手中箱子到脚下'],
+    ['右键（按住 / 松开）', '持箱时蓄力投掷：按住蓄力（0.8s 满），松开扔出；与准星指向何处无关'],
     ['Tab', '打开/关闭仓储电脑界面'],
     ['O', '开门营业 / 提前打烊'],
     ['Esc', '关闭当前界面 / 退出收银台 / 释放指针锁定']
@@ -48,6 +49,7 @@
   var tabButtons = null;
 
   var moneyValEl, levelValEl, xpFillEl, hudDayEl, hudClockEl, promptEl, crosshairEl, toastEl;
+  var chargeEl = null, chargeFillEl = null;
 
   /* ---------- 小工具 ---------- */
   function el(tag, cls, text) {
@@ -763,6 +765,12 @@
     hudLevel.appendChild(track);
 
     crosshairEl = document.getElementById('crosshair');
+    chargeEl = document.getElementById('charge');
+    if (chargeEl) {
+      chargeFillEl = document.createElement('div');
+      chargeEl.appendChild(chargeFillEl);
+      chargeEl.style.display = 'none';
+    }
     promptEl = document.getElementById('prompt');
     toastEl = document.getElementById('toast');
 
@@ -860,6 +868,14 @@
     crosshairEl.style.background = hit ? 'var(--hl)' : 'rgba(255,255,255,.6)';
   }
 
+  /* 蓄力力度条：v ∈ [0,1] 显示并设填充宽度；null 隐藏。填充宽度口径 = charge × 120px（DESIGN §3） */
+  function setCharge(v) {
+    if (!chargeEl || !chargeFillEl) return;
+    if (v === null || v === undefined) { chargeEl.style.display = 'none'; return; }
+    chargeEl.style.display = 'block';
+    chargeFillEl.style.width = (G.clamp(v, 0, 1) * 120) + 'px';
+  }
+
   /* ---------------------------------------------------------------
      初始化
   --------------------------------------------------------------- */
@@ -893,6 +909,7 @@
     init: init,
     showScreen: showScreen,
     prompt: setPrompt,
-    toast: toast
+    toast: toast,
+    setCharge: setCharge
   };
 })();
