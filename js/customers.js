@@ -484,7 +484,9 @@
            ② 「窗口空了才解锁」（本条最初的写法）在箱距 < AVOID_RANGE 的密排下有害：
               锁跨箱延续，顾客躲开左边那只后一路撞进右边那只（复审 3430 组三箱布局：
               穿箱组 1305 → 995，最坏抖动 7 → 14，仍远低于完全去锁的 32）。
-           箱正对准（|lat| < 0.05）时按 id 奇偶定侧，保证确定性。 */
+           箱正对准（|lat| < 0.05）时按 id 奇偶定侧，保证确定性。
+           【护栏】`!lockSeen`（= 锁按箱释放）由 cust.dodgeRelocksPerBox 守：撤掉它，
+           左右交错三箱夹具下顾客中心到最近箱心从 0.42m 掉到 0.07m（D-T7 变异实测）。 */
         if (!c.avoidSide || !lockSeen) {
           c.avoidSide = (Math.abs(bestLat) < 0.05) ? ((c.id % 2) ? 1 : -1) : (bestLat > 0 ? 1 : -1);
           c.avoidBox = bestBox;

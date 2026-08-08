@@ -1303,6 +1303,43 @@
         round2(rrGap) + 'm（应 ≤0.02）');
       G.customers._test.remove(rrA);
 
+      /* D-T7（T5 审查）：让位方向的锁必须【按箱】释放——锁住的那只一离开探测窗口就重取
+         （stepAvoid 里的 `!c.avoidSide || !lockSeen`）。该改动此前零护栏：撤掉 `!lockSeen`
+         全量自测照样全绿。机理：箱距 < AVOID_RANGE 的密排下探测窗口几乎不会空，
+         「窗口空了才解锁」让锁跨箱延续，顾客躲开左边那只之后一路撞进右边那只。
+         夹具 = 左右交错三箱（x 5.5 / 6.5 / 5.5，z 间距 0.5），度量 = 全程顾客中心到
+         任一箱中心的最小水平距离；走 _test.stepOne 全流程（含 stepMove 的回拽）。 */
+      var lkC = G.customers._test.spawnOne();
+      lkC.mesh.position.set(6.0, 0, -6.0);
+      lkC.mesh.rotation.y = 0;
+      lkC.lane = 0;
+      lkC.path = [new THREE.Vector3(6.0, 0, 0.0), new THREE.Vector3(6.0, 0, 6.0)];
+      var lkXs = [5.5, 6.5, 5.5], lkBoxes = [], lkI, lkJ;
+      for (lkI = 0; lkI < 3; lkI++) {
+        var lkB = G.world.spawnBox('f_noodle', { x: lkXs[lkI], z: -4.0 + lkI * 0.5 });
+        if (lkB) lkBoxes.push(lkB);
+      }
+      var lkMin = Infinity;
+      if (lkBoxes.length === 3) {
+        for (lkI = 0; lkI < 180; lkI++) {                 // 3s：走完整段三箱
+          G.customers._test.stepOne(lkC, 1 / 60);
+          for (lkJ = 0; lkJ < 3; lkJ++) {
+            var lkP = lkBoxes[lkJ].mesh.position;
+            var lkDx = lkP.x - lkC.mesh.position.x, lkDz = lkP.z - lkC.mesh.position.z;
+            var lkD = Math.sqrt(lkDx * lkDx + lkDz * lkDz);
+            if (lkD < lkMin) lkMin = lkD;
+          }
+        }
+      }
+      /* 阈值 0.20 而非「箱半对角 0.318」这类几何整数：正控（撤 `!lockSeen`）实测 0.07、
+         修后 0.42，0.20 是两侧余量都 ≥2× 的位置（2.1× / 2.9×）。取 0.25 会让通过侧只剩
+         1.7×，不够。夹具确定性：stepAvoid 不读 c.dims，箱位偏离车道 0.5m ≫ 0.05 的
+         正对准判据，故 spawnOne 的随机体型与 id 奇偶都不影响读数。 */
+      ck('cust.dodgeRelocksPerBox', lkBoxes.length === 3 && lkMin >= 0.20,
+        '左右交错三箱（x 5.5/6.5/5.5，z 间距 0.5）：全程顾客中心到最近箱心 ' +
+        round2(lkMin) + 'm（须 ≥0.20；撤掉 `!lockSeen` 的正控实测 0.07）');
+      for (lkI = 0; lkI < lkBoxes.length; lkI++) G.world.destroyBox(lkBoxes[lkI]);
+      G.customers._test.remove(lkC);
 
       G.customers._test.remove(kc);
       G.customers._test.remove(sc2);
