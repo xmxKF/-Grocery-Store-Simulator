@@ -36,6 +36,13 @@
   var RAGDOLL_HOLD = 2.50;        // 躺平结束（决策 4「倒地 2.5 秒」含倒下动作）
   var RAGDOLL_END = 2.85;         // 爬起结束
 
+  /* ---------- D-T5 局部绕行（spec §8）---------- */
+  var AVOID_RANGE = 1.2;      // 前向探测距离
+  var AVOID_HALF_W = 0.55;    // 侧向关心带半宽
+  var AVOID_STEP = 0.60;      // 让开量
+  var AVOID_MAX = 0.80;       // 偏移总钳制（主通道净宽 2.4m 半宽 1.2m − 顾客半径 0.40）
+  var AVOID_SMOOTH = 3;       // 平滑系数（峰值横移 1.8 m/s；spec 的 6 会到 3.6 m/s，像瞬移）
+
   var active = [];
   var spawnTimer = null;
   var sceneRef = null;
@@ -405,12 +412,70 @@
     }
   }
 
+  /* 纯观感的横向让位：箱不进 G.world.colliders、不重建导航图，绕行失败时顾客直接穿过箱子。
+     c.avoid 是【已施加到位置上的横向位移量】，每帧沿行进法向补差值——
+     spec 原案（把偏移叠进 c.lane、偏移数米外的路点）实测 1s 只挪 0.06–0.10m，等于没绕行。 */
+  function stepAvoid(c, dt, loose) {
+    var p = c.mesh.position;
+    var fx, fz;
+    if (c.path.length) {
+      fx = c.path[0].x - p.x;
+      fz = c.path[0].z - p.z;
+      var fl = Math.sqrt(fx * fx + fz * fz);
+      if (fl < 1e-4) { fx = Math.sin(c.mesh.rotation.y); fz = Math.cos(c.mesh.rotation.y); }
+      else { fx /= fl; fz /= fl; }
+    } else {
+      fx = Math.sin(c.mesh.rotation.y);
+      fz = Math.cos(c.mesh.rotation.y);
+    }
+    /* 车道法向：与 stepMove 里 c.lane 用的 (-ndz/nl, ndx/nl) 同一条 */
+    var nx = -fz, nz = fx;
+    var target = 0;
+    if (c.path.length > 1 && loose && loose.length) {
+      var bestD = Infinity, bestLat = 0;
+      for (var i = 0; i < loose.length; i++) {
+        var b = loose[i];
+        if (!b.mesh) continue;
+        var dx = b.mesh.position.x - p.x, dz = b.mesh.position.z - p.z;
+        var fp = dx * fx + dz * fz;
+        if (!(fp > 0) || fp > AVOID_RANGE) continue;
+        var lat = dx * nx + dz * nz;                  // 在车道法向上的投影
+        if (Math.abs(lat) >= AVOID_HALF_W) continue;
+        if (fp < bestD) { bestD = fp; bestLat = lat; }
+      }
+      if (bestD < Infinity) {
+        /* 让位方向一旦选定就锁住，直到箱脱离探测窗口（迟滞）。
+           不锁会自激振荡：侧移本身会改变箱相对车道法向的投影，lat 越过 0 后 sgn 反号，
+           顾客会在箱两侧来回摆。箱正对准（|lat| < 0.05）时按 id 奇偶定侧，保证确定性。 */
+        if (!c.avoidSide) {
+          c.avoidSide = (Math.abs(bestLat) < 0.05) ? ((c.id % 2) ? 1 : -1) : (bestLat > 0 ? 1 : -1);
+        }
+        target = -c.avoidSide * AVOID_STEP;
+      } else {
+        c.avoidSide = 0;
+      }
+    } else {
+      c.avoidSide = 0;
+    }
+    c.avoid += (target - c.avoid) * Math.min(1, dt * AVOID_SMOOTH);
+    var lo = -AVOID_MAX - c.lane, hi = AVOID_MAX - c.lane;   // 保证 |lane + avoid| ≤ 0.80
+    if (c.avoid < lo) c.avoid = lo;
+    if (c.avoid > hi) c.avoid = hi;
+    var da = c.avoid - c.avoidApplied;
+    if (da) {
+      p.x += nx * da;
+      p.z += nz * da;
+      c.avoidApplied = c.avoid;
+    }
+  }
+
   /* 一名顾客的完整每帧流程。update() 的循环体与 _test.stepOne 同源同函数，
      不得在两处各写一份（否则自测测的与真实跑的会分叉）。 */
   function stepCustomer(c, dt, loose) {
     stepKnockdown(c, dt, loose);
     if (!c.ragdoll) {
       var hadPath = c.path.length > 0;
+      stepAvoid(c, dt, loose);
       stepMove(c, dt);
       applyGait(c, dt, hadPath);
     }
@@ -612,6 +677,9 @@
       remove: function (c) { if (c.mesh.parent) c.mesh.parent.remove(c.mesh); },
       stepOne: function (c, dt) {
         stepCustomer(c, dt, (G.physics && G.physics.looseBoxes) ? G.physics.looseBoxes() : EMPTY_LOOSE);
+      },
+      stepAvoid: function (c, dt) {
+        stepAvoid(c, dt, (G.physics && G.physics.looseBoxes) ? G.physics.looseBoxes() : EMPTY_LOOSE);
       }
     }
   };

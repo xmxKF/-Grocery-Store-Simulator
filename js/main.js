@@ -1121,10 +1121,14 @@
          path 为空、amp/phase 为 0，于是 stepMove 第一行 `if (!c.path.length) return;` 直接返回，
          applyGait 的 bob = −0.03×|sin(0)|×0 恒为 0——把 stepCustomer 的 `if (!c.ragdoll)`
          整个拆掉（连同 applyGait 开头那道 `if (c.ragdoll) return;`）也一帧不动，实测仍 158/158 全绿。
-         给它一条走得动的 path 和非零 amp/phase，「漏冻结」才有可观测后果。 */
-      kc.path = [new THREE.Vector3(6.0, 0, 5.0)];
+         给它一条走得动的 path 和非零 amp/phase，「漏冻结」才有可观测后果。
+         D-T5 追加：path 必须给到 2 个点、且窗口内摆一只 loose 箱，否则 stepAvoid 的探测段
+         （`c.path.length > 1 && loose.length`）恒不成立、target 恒 0、da 恒 0——把 stepAvoid
+         写到 `if (!c.ragdoll)` 外面同样一帧不动，这条断言对「倒地期绕行」依旧空洞。 */
+      kc.path = [new THREE.Vector3(6.0, 0, 5.0), new THREE.Vector3(6.0, 0, 8.0)];
       kc.amp = 1;
       kc.phase = 1;
+      var kAvoidBox = G.world.spawnBox('d_water', { x: 6.0, z: 0.8 });   // 正前方 0.8m，速度 0 不会二次砸倒
       var kRecover = -1, kDownPos = kp0.clone();     // kDownPos = 最后一个「仍在倒地」帧的位置
       for (var kri = 0; kri < 53; kri++) {           // 已推进 0.25s，再推进 2.65s → 合计 2.90s ≥ 2.85
         G.customers._test.stepOne(kc, 0.05);
@@ -1135,6 +1139,7 @@
         if (kc.torso.position.y !== kTorso0 || kc.mesh.position.distanceTo(kp0) > 1e-9) kFrozen = false;
         kDownPos.copy(kc.mesh.position);
       }
+      if (kAvoidBox) G.world.destroyBox(kAvoidBox);
       ck('cust.knockdownRecovers',
         kc.ragdoll === false && kc.mesh.rotation.x === 0 && kDownPos.distanceTo(kp0) < 1e-6,
         '2.9s 后 ragdoll=' + kc.ragdoll + '，rotation.x=' + kc.mesh.rotation.x +
@@ -1167,6 +1172,47 @@
       if (pbox2) G.world.destroyBox(pbox2);
       ck('cust.knockdownPatienceRuns', Math.abs(pc2.patience - 2.85) < 0.05,
         '倒地 2.85s 期间 patience 增量 ' + round2(pc2.patience) + '（应 ≈2.85，证明 stepState 照常推进）');
+
+      /* --- D-T5 局部绕行（spec §8；侧移改为 carrier 式，见计划 Task 5 的偏离说明）--- */
+      var dc = G.customers._test.spawnOne();
+      dc.mesh.position.set(6.0, 0, -6.0);
+      dc.mesh.rotation.y = 0;                                  // 正前方 = +Z
+      dc.lane = 0;
+      dc.path = [new THREE.Vector3(6.0, 0, 0.0), new THREE.Vector3(6.0, 0, 6.0)];
+      var dBox = G.world.spawnBox('f_noodle', { x: 6.0, z: -5.0 });
+      var dLat = 0, dSum = 0;
+      if (dBox) {
+        for (var ddi = 0; ddi < 60; ddi++) {
+          // 障碍始终保持在顾客正前方 1.0m（测的是绕行响应，不是「走过箱子」的时序）
+          dBox.mesh.position.set(dc.mesh.position.x, 0.225, dc.mesh.position.z + 1.0);
+          if (dBox.rb) { dBox.rb.position.set(dBox.mesh.position.x, 0.225, dBox.mesh.position.z); dBox.rb.wakeUp(); dBox.rb.velocity.set(0, 0, 0); }
+          G.customers._test.stepAvoid(dc, 1 / 60);
+        }
+        dLat = Math.abs(dc.mesh.position.x - 6.0);
+        dSum = Math.abs(dc.lane + dc.avoid);
+      }
+      ck('cust.dodgeLooseBox', dLat >= 0.30 && dSum <= 0.80,
+        '正前方 1.0m 的 loose 箱：1s 后侧移 ' + round2(dLat) + 'm（应 ≥0.30），|lane+avoid| = ' +
+        round2(dSum) + '（应 ≤0.80），avoid=' + round2(dc.avoid));
+      if (dBox) G.world.destroyBox(dBox);
+
+      var dNav0 = G.world.nav._nodes.length, dCol0 = G.world.colliders.length;
+      var dPathA = G.world.nav.findPath(G.world.nav.entry, G.world.nav.aisleSpots[0]);
+      var dBox2 = G.world.spawnBox('d_water', { x: 6.0, z: -6.5 });
+      for (var dni = 0; dni < 30; dni++) G.customers._test.stepAvoid(dc, 1 / 60);
+      var dPathB = G.world.nav.findPath(G.world.nav.entry, G.world.nav.aisleSpots[0]);
+      var dSame = dPathA.length === dPathB.length;
+      for (var dpi = 0; dpi < dPathA.length && dSame; dpi++) {
+        if (dPathA[dpi].distanceTo(dPathB[dpi]) > 1e-9) dSame = false;
+      }
+      ck('cust.dodgeNoNavChange',
+        G.world.colliders.length === dCol0 && G.world.nav._nodes.length === dNav0 && dSame,
+        'collider ' + dCol0 + '→' + G.world.colliders.length + '，nav 节点 ' + dNav0 + '→' +
+        G.world.nav._nodes.length + '，findPath 逐点相同=' + dSame);
+      if (dBox2) G.world.destroyBox(dBox2);
+      G.customers._test.remove(dc);
+
+
       G.customers._test.remove(kc);
       G.customers._test.remove(sc2);
       G.customers._test.remove(hc);
