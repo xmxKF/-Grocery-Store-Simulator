@@ -871,11 +871,16 @@
          WALL_H=3.6 下 ceilingCaps 恰好也在 3.45 跟着红，纯属巧合——WALL_H 一抬它就放宽，
          而本条不动（详见 js/physics.js CEIL_Y 注释）。0.45 = 纸箱 BoxGeometry 边长，
          physics 未导出 BOX_HALF，为这一处扩契约不值，故用字面量。 */
-      var gateH = 0;
+      /* 取【最矮】那扇门：空当 = CEIL_Y − 门顶，门越矮空当越大、exploit 越真，取 max
+         是往宽松方向错。当前每扇门都被 colliderHeights 钉死在 3.0 故 min/max 同值，但
+         本条断言的正确性不该隐式挂在另一条断言上。找不到门时回落 0，交给 gateH > 0
+         的退化守卫（卷帘门 collider 全被误删 / h 被摘掉都必须红，不能静默通过）。 */
+      var gateH = Infinity;
       for (var gi = 0; gi < G.world.colliders.length; gi++) {
         var gc = G.world.colliders[gi];
-        if (gc.zoneGate && typeof gc.h === 'number' && gc.h > gateH) gateH = gc.h;
+        if (gc.zoneGate && typeof gc.h === 'number' && gc.h < gateH) gateH = gc.h;
       }
+      if (gateH === Infinity) gateH = 0;
       ck('physics.ceilingSealsZoneGates',
         !!G.physics && gateH > 0 && (G.physics.CEIL_Y - gateH) < 0.45,
         '门顶 ' + gateH + ' → 天花板 ' + (G.physics ? G.physics.CEIL_Y : '?') + '，空当 ' +
