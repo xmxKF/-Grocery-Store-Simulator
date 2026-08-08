@@ -83,8 +83,23 @@
   };
 
   // ---- 存档 ----
-  var SAVE_KEY = 'gss-save-v2';
+  /* 开发者测试入口 ?dev=1（CONTRACTS §开发者入口）：整套存档读写切到独立键 gss-save-dev，
+     真实存档键（v2 / v1）一个字节都不碰——测试档若与真实档同键，开发模式下随便打烊一次
+     就会把玩家进度覆写掉。dev 模式还必须【不回落 v1】：一次回落就会把玩家的旧档迁移掉。
+     与 ?selftest 同时出现时 selftest 优先、dev 被忽略：自测断言按默认开局状态写死
+     （boot.state 等），预置全开状态会让它们整片变红。 */
+  var SAVE_KEY_V2 = 'gss-save-v2';
   var SAVE_KEY_V1 = 'gss-save-v1';
+  var SAVE_KEY_DEV = 'gss-save-dev';
+
+  function devFromSearch(search) {
+    var s = String(search || '');
+    return s.indexOf('dev=1') !== -1 && s.indexOf('selftest') === -1;
+  }
+
+  var DEV = devFromSearch(location.search);
+  var SAVE_KEY = DEV ? SAVE_KEY_DEV : SAVE_KEY_V2;
+  G.DEV = DEV;
 
   G.save = function () {
     try {
@@ -176,6 +191,7 @@
         data = null;   // v2 损坏不得吞掉玩家的 v1：落到下面的迁移路径
       }
       if (!data) {
+        if (DEV) return false;   // dev 模式绝不回落 v1：读一次就会把玩家的旧档迁移掉
         var v1raw = localStorage.getItem(SAVE_KEY_V1);
         if (!v1raw) return false;
         data = migrateV1(JSON.parse(v1raw));
@@ -250,9 +266,20 @@
   G.resetSave = function () {
     try {
       localStorage.removeItem(SAVE_KEY);
-      localStorage.removeItem(SAVE_KEY_V1);
+      if (!DEV) localStorage.removeItem(SAVE_KEY_V1);   // dev 模式一个真实键都不碰
     } catch (e) {
       // 忽略
     }
+  };
+
+  /* 自测钩子：dev 模式在模块初始化时按 URL 定死，而自测页永远不是 dev 模式（selftest 优先），
+     故断言「dev 模式不写真实存档键」只能靠这个钩子切换存档键归属。仅 ?selftest 使用。 */
+  G._test = {
+    devFromSearch: devFromSearch,
+    setDevMode: function (on) {
+      DEV = !!on;
+      SAVE_KEY = DEV ? SAVE_KEY_DEV : SAVE_KEY_V2;
+    },
+    saveKey: function () { return SAVE_KEY; }
   };
 })();

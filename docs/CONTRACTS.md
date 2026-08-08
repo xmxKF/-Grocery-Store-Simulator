@@ -7,7 +7,7 @@
   - r128 注意：无 `CapsuleGeometry`（顾客身体用 Box/Cylinder 拼），用 `BoxGeometry`/`MeshLambertMaterial`/flat color。
 - 无构建步骤、无 ES modules、运行时零网络请求。双击 `index.html`（file://）即可玩。
 - 每个 js 文件用 IIFE + `'use strict'`，只向全局命名空间 `window.G` 挂自己的模块。
-- 游戏内 UI 文本一律**简体中文**。存档 key：`localStorage['gss-save-v2']`（结构见 G.state 段「存档」条款）；`gss-save-v1` 保留供一次性迁移读取。
+- 游戏内 UI 文本一律**简体中文**。存档 key：`localStorage['gss-save-v2']`（结构见 G.state 段「存档」条款）；`gss-save-v1` 保留供一次性迁移读取；`gss-save-dev` 是开发者入口 `?dev=1` 的独立测试档（见「开发者入口」段），与前两把键彻底隔离。
 
 ## 文件清单与归属
 | 文件 | 归属 agent |
@@ -83,6 +83,18 @@ G.save(); G.load() /*->bool*/; G.resetSave()
 - **旧 v2 档兼容**：C 期终审前的 v2 只有 `storage:[{id,pid,left}]`（仅仓库位）。`load()` 见不到 `boxes` 时清场后回落 `restoreStorage(data.storage)`；新写的档不再含 `storage`。
 - 读取分流：优先 `gss-save-v2`；无则读 `gss-save-v1` → `migrateV1`：继承 money/day/xp/level/prices/licenses/negDays；`cashier → registers[0].staffed`；zones 全锁（仅 A）；shelves 不继承 → 按进价全额折现入 money；首次 save 写 v2；**v1 键保留不删**。
 - `resetSave()`：**双键清除**（`gss-save-v1` 与 `gss-save-v2` 一并删除）。
+- 以上三条**只描述常规模式**。dev 模式（`?dev=1`）下 `save/load/resetSave` 整体改指 `gss-save-dev`，且不走 v1 分流、`resetSave()` 只删自己那把键，见下段。
+```js
+G.DEV                       // boolean，加载时按 URL 定死；?dev=1 且不带 selftest 时为 true
+G._test                     // 自测钩子：devFromSearch(search)/setDevMode(on)/saveKey()，仅 ?selftest 使用
+```
+
+### 开发者入口 `?dev=1`（state.js + main.js）
+纯开发者工具，**不是玩法**：把「玩家已满足全部等级 / 许可证门槛」的状态直接摆好，省掉前期爬坡。门槛判断一条不改。
+- 载入的全开状态（`main.js devPreload()`，仅在非自测的 `?dev=1` 下调用一次，在 `showScreen('menu')` 之前）：Lv10 / xp 3200 / ¥50000 / 四证齐（食品·饮料·日用品·生鲜）/ 三区全开（**必须走 `G.world.buildZone()`**，`W → B → C`，顺序同 `G.load`）/ R1~R3 由 buildRegister 置 owned / 120 格位全灌满（冷藏柜只放生鲜，经 `restoreShelves` 批量灌）/ 10 只箱（仓库位 4、卸货区 4、店内地面 2 只落在 R3 台前 `(10, 5.6)`、`(11.2, 5.6)`）。
+- **不变式：dev 模式一个字节都不写真实存档键。** `SAVE_KEY` 改指 `gss-save-dev`；`load()` 在 dev 档缺席时**直接返回 false，绝不回落 `gss-save-v1`**（回落一次就把玩家的旧档迁移掉了）；`resetSave()` 只删 `gss-save-dev`；`ui.js` 的「继续」按钮在 dev 模式下只看 `gss-save-dev`。守这条的断言：`dev.saveNeverTouchesRealKeys` / `dev.loadNoV1Fallback` / `dev.resetSaveOnlyDevKey`（判据为真实键**逐字节未变**，非「键还在」）。
+- **`?dev=1` 与 `?selftest=1` 同时出现：selftest 优先，dev 被忽略**（`devFromSearch` 见 selftest 即返回 false）。理由：自测断言按默认开局状态写死（`boot.state` 等），预置全开状态会让它们整片变红。断言 `dev.selftestWins`。
+- 自测块的 localStorage 快照保护覆盖**三把键**（含 `gss-save-dev`），否则自测会污染玩家的开发模式存档。
 
 ### G.tex（textures.js）
 ```js
@@ -260,7 +272,7 @@ G.ui.setCharge(v /*0..1 显示并设填充宽度；null 隐藏*/)   // D 期；#
     1. `--user-data-dir` 会把 `gss-lowfx` 留在 profile 里。两态必须用**各自独立**的 profile 目录并在**每次跑前 `rm -rf`**，否则正常态会静默跑成 lowfx（表现为断言总数变少、`tex.*` 整块消失）。
     2. **`&lowfx=1` URL 参数不存在。** lowfx 态只能用跳板页：一个临时 html 先 `localStorage.setItem('gss-lowfx','1')` 再 `location.replace('index.html?selftest=1')`，且必须带 `--allow-file-access-from-files`。
     3. 在受沙箱约束的 shell 里调用 headless Edge 会静默产出 0 字节 DOM（无报错）。必须在不受沙箱约束的方式下调用。
-  - 当前基线：正常态 **174/174**、lowfx **169/169**（**D 期终审修复轮实测**；两态差 5 条 = `tex.*` 分组只在正常态求值）。
+  - 当前基线：正常态 **181/181**、lowfx **176/176**（`?dev=1` 入口并入后实测；两态差 5 条 = `tex.*` 分组只在正常态求值）。
   - **`runSelftest` 必须保持单体函数**（D 期终审登记）：元断言 `selftest.assertAfterTick` 用 `runSelftest.toString()` 扫描自测块源码，扫描面就是这一个函数体。把自测块拆成多个函数 / 挪进独立 IIFE，会**静默削掉**元断言的扫描面——被挪走的那些 `G.load()` 站点不再被检查，而断言本身照样绿，没有任何报警。新增自测段一律写在 `runSelftest` 体内。
   - **本套唯一的 wall-clock 断言是 `perf.physicsStep`**，其余全为确定性结构断言。判据挂 **p50**（不是 p95：p95 取 60 样本的第 57 名，一次 GC/调度抖动就能顶穿预算，实测跑出过 p95 4.0ms 假红而同次 p50 只有 1.2ms）。一条假红把整支变成 `SELFTEST:FAIL`，会毁掉「红 = 真有事」这个前提。
 

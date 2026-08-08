@@ -30,8 +30,9 @@
     ['Esc', '关闭当前界面 / 退出收银台 / 释放指针锁定']
   ];
 
-  // CONTRACTS.md 固定存档 key，仅用于「继续」按钮可用性判断；v1 仍算有档（G.load 会迁移）
-  var SAVE_KEYS = ['gss-save-v2', 'gss-save-v1'];
+  // CONTRACTS.md 固定存档 key，仅用于「继续」按钮可用性判断；v1 仍算有档（G.load 会迁移）。
+  // dev 模式（?dev=1）只看独立键：真实档的存在与否不得让开发模式的「继续」亮起来
+  var SAVE_KEYS = G.DEV ? ['gss-save-dev'] : ['gss-save-v2', 'gss-save-v1'];
 
   /* ---------- 模块状态 ---------- */
   var screens = {};      // name -> #screen-* 元素
@@ -63,7 +64,10 @@
 
   function hasSave() {
     try {
-      return !!(localStorage.getItem(SAVE_KEYS[0]) || localStorage.getItem(SAVE_KEYS[1]));
+      for (var i = 0; i < SAVE_KEYS.length; i++) {
+        if (localStorage.getItem(SAVE_KEYS[i])) return true;
+      }
+      return false;
     } catch (e) { return false; }
   }
 

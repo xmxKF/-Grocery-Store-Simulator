@@ -123,6 +123,7 @@
       runSelftest();
       return;
     }
+    if (G.DEV) devPreload();
     G.ui.showScreen('menu');
     requestAnimationFrame(frame);
   }
@@ -214,6 +215,60 @@
 
   function onCashierChanged(payload) {
     G.world.setCashierVisible(payload.index | 0, payload.hired);
+  }
+
+  /* ---------------------------------------------------------------
+     开发者测试入口 ?dev=1（CONTRACTS §开发者入口）
+     把「玩家已经满足全部等级/许可证门槛」的状态直接摆好，省掉前期爬坡。
+     门槛判断本身一条不改（这不是绕过判断，是把状态摆到门槛之上）；存档键由 state.js
+     切到 gss-save-dev，真实存档不受任何影响。
+  --------------------------------------------------------------- */
+  var DEV_MONEY = 50000;
+  var DEV_BOX_PIDS = ['f_noodle', 'd_water', 'h_tissue', 'p_apple'];
+
+  /* 每个格位灌满：冷藏柜只收生鲜，其余按非生鲜商品轮换，24 种商品全在场上 */
+  function devFillShelves() {
+    var freshList = [], dryList = [];
+    G.data.PRODUCTS.forEach(function (p) {
+      if (p.cat === '生鲜') freshList.push(p); else dryList.push(p);
+    });
+    var slots = G.world.slots, data = [], fi = 0, di = 0;
+    for (var i = 0; i < slots.length; i++) {
+      var p = slots[i].fridge ? freshList[fi++ % freshList.length] : dryList[di++ % dryList.length];
+      data.push({ id: slots[i].id, productId: p.id, count: p.slotCap });
+    }
+    G.world.restoreShelves(data);   // 批量灌格位的既有入口（读档走的也是它）
+  }
+
+  /* 仓库位 / 卸货区 / 店内地面各摆几只箱：投掷、堆叠、扔上传送带进场就能试 */
+  function devSpawnBoxes() {
+    var i, slot, box;
+    for (i = 0; i < DEV_BOX_PIDS.length; i++) {
+      slot = G.world.storageSlots[i];
+      if (!slot) continue;
+      box = G.world.spawnBox(DEV_BOX_PIDS[i], slot.pos);
+      if (box) G.world.storeBox(slot, box);
+    }
+    for (i = 0; i < DEV_BOX_PIDS.length; i++) G.world.spawnBox(DEV_BOX_PIDS[i]);   // 无参 = 卸货区空位
+    // 店内地面：进门正前方、R3 台前 1.4m，捡起来就能往传送带上扔
+    G.world.spawnBox('f_chips', { x: 10, z: 5.6 });
+    G.world.spawnBox('d_cola', { x: 11.2, z: 5.6 });
+  }
+
+  function devPreload() {
+    var st = G.state;
+    st.money = DEV_MONEY;
+    st.level = G.data.LEVELS[G.data.LEVELS.length - 1].level;
+    st.xp = G.data.LEVELS[G.data.LEVELS.length - 1].xpNeeded;
+    st.licenses = ['食品', '饮料', '日用品', '生鲜'];
+    // 区域一律走 buildZone（CONTRACTS 不变式：区域建造的唯一入口），顺序同 G.load；
+    // 许可证先落位，buildZone 内部那次 syncLayout 才会把 4 组冷藏柜一并建出来
+    G.world.buildZone('W');
+    G.world.buildZone('B');
+    G.world.buildZone('C');
+    devFillShelves();
+    devSpawnBoxes();
+    G.ui.toast('开发者模式：全开测试档，存档键 gss-save-dev（真实存档不受影响）', 'warn');
   }
 
   /* ---------------------------------------------------------------
@@ -371,10 +426,16 @@
     }
     /* 自测会 resetSave / nextDay 存盘 / 写 v1 迁移样本——而玩家的真实存档就在同一个
        localStorage（同机 file:// 直接开 index.html 游玩，自测页与游戏页同域同源）。
-       起手快照两个存档键，收尾（含异常路径，见 finally）无条件还原：原值为 null 则删键。 */
+       起手快照三个存档键，收尾（含异常路径，见 finally）无条件还原：原值为 null 则删键。
+       gss-save-dev 是 ?dev=1 的独立测试档（dev.* 断言会写它），同样必须纳入保护，
+       否则自测会污染玩家的开发模式存档。 */
     var saveBackup = null;
     try {
-      saveBackup = { 'gss-save-v1': localStorage.getItem('gss-save-v1'), 'gss-save-v2': localStorage.getItem('gss-save-v2') };
+      saveBackup = {
+        'gss-save-v1': localStorage.getItem('gss-save-v1'),
+        'gss-save-v2': localStorage.getItem('gss-save-v2'),
+        'gss-save-dev': localStorage.getItem('gss-save-dev')
+      };
     } catch (e) {
       saveBackup = null;
     }
@@ -2578,6 +2639,61 @@
          满配最坏场景，提前销毁会让总提交数少数 48 次（主 pass 24 + 阴影 pass 24）。
          自测到此结束，之后无人再依赖场上箱数。 */
       for (var cbj = 0; cbj < capBoxes.length; cbj++) G.world.destroyBox(capBoxes[cbj]);
+
+      /* --- 开发者测试入口 ?dev=1 的存档隔离 ---
+         本项目已被「测试路径写真实存档」咬过两次，判据取【真实键逐字节未变】而不是「键还在」。
+         正控：dev 键确实写出了一份能解析、带本次写入值的新档（证明 G.save() 真跑过），
+         且两个真实键在断言时都非空且给出字节数（证明「未变」不是因为它们本来就是 null）。 */
+      var devTest = G._test;
+      var realV2 = JSON.stringify({ v: 2, money: 777.5, day: 42, level: 6 });
+      var realV1 = JSON.stringify({ money: 111, day: 2, xp: 30, level: 2, licenses: ['食品'], shelves: [] });
+      localStorage.setItem('gss-save-v2', realV2);
+      localStorage.setItem('gss-save-v1', realV1);
+      localStorage.removeItem('gss-save-dev');
+      devTest.setDevMode(true);
+      ck('dev.saveKeySwitched', devTest.saveKey() === 'gss-save-dev', 'dev 模式存档键 ' + devTest.saveKey());
+
+      G.state.money = 12345.6;
+      G.save();
+      var devParsed = null;
+      try { devParsed = JSON.parse(localStorage.getItem('gss-save-dev')); } catch (devE) { devParsed = null; }
+      var v2AfterDev = localStorage.getItem('gss-save-v2'), v1AfterDev = localStorage.getItem('gss-save-v1');
+      ck('dev.saveNeverTouchesRealKeys',
+        !!devParsed && Math.abs(devParsed.money - 12345.6) < 0.01 &&
+        v2AfterDev === realV2 && v1AfterDev === realV1,
+        'dev 键写入 money=' + (devParsed ? devParsed.money : 'null') + '；v2 ' +
+        (v2AfterDev === realV2 ? '逐字节未变' : '被改写') + '（' + String(v2AfterDev).length + 'B）、v1 ' +
+        (v1AfterDev === realV1 ? '逐字节未变' : '被改写') + '（' + String(v1AfterDev).length + 'B）');
+
+      // dev 模式不得回落 v1：好 v1 + 无 dev 档 → load 必须返回 false，且不留下任何迁移产物
+      localStorage.removeItem('gss-save-dev');
+      var devLoad = G.load();
+      ck('dev.loadNoV1Fallback',
+        devLoad === false && localStorage.getItem('gss-save-v1') === realV1 &&
+        localStorage.getItem('gss-save-v2') === realV2 && localStorage.getItem('gss-save-dev') === null,
+        'dev 无档时 load 返回 ' + devLoad +
+        '；v1 ' + (localStorage.getItem('gss-save-v1') === realV1 ? '逐字节未变' : '被改写') +
+        '、v2 ' + (localStorage.getItem('gss-save-v2') === realV2 ? '逐字节未变' : '被改写') +
+        '、迁移产物 ' + (localStorage.getItem('gss-save-dev') === null ? '未写出' : '已写出') +
+        '（正控：同一形状的 v1 在常规模式下可迁移，见 save.migrateV1）');
+
+      // dev 模式的 resetSave 只删自己的键
+      localStorage.setItem('gss-save-dev', '{"v":2,"money":1}');
+      G.resetSave();
+      ck('dev.resetSaveOnlyDevKey',
+        localStorage.getItem('gss-save-dev') === null &&
+        localStorage.getItem('gss-save-v2') === realV2 && localStorage.getItem('gss-save-v1') === realV1,
+        'dev 键已删；真实键仍在 v2=' + String(localStorage.getItem('gss-save-v2')).length +
+        'B / v1=' + String(localStorage.getItem('gss-save-v1')).length + 'B');
+      devTest.setDevMode(false);
+
+      // ?dev=1 与 ?selftest=1 同时出现的裁定：selftest 优先，dev 被忽略
+      ck('dev.selftestWins',
+        devTest.devFromSearch('?dev=1') === true &&
+        devTest.devFromSearch('?selftest=1&dev=1') === false &&
+        devTest.devFromSearch('?dev=1&selftest=1') === false &&
+        devTest.devFromSearch('') === false && G.DEV === false,
+        '?dev=1 → true；与 selftest 同现 → false；本页 G.DEV=' + G.DEV);
 
       /* ---- 元断言：堵「断言取样早于游戏自己观测该量」这类空洞断言 ----
          D 期出现四次「加粗的 MUST 却没有断言能红」，共同根因不是忘做变异验证，而是
