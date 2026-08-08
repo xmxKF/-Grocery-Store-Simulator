@@ -49,7 +49,24 @@
     camera: null,
     getPose: getPose,
     setPose: setPose,
-    _test: { prompt: function (entry) { return computePrompt(entry); } }
+    _test: {
+      prompt: function (entry) { return computePrompt(entry); },
+      pickUp: function (box) {
+        var list = (G.world && G.world.interactables) || [];
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].type === 'box' && list[i].data && list[i].data.box === box) {
+            pickUpBox(list[i]);
+            return true;
+          }
+        }
+        return false;
+      },
+      putDown: function () { putDownBox(); },
+      storeInto: function (slot) {
+        storeCarriedBox({ data: { slot: slot } });
+        return G.player.carrying === null;
+      }
+    }
   };
 
   // ---- 初始化 ----
@@ -556,6 +573,7 @@
     var box = entry.data && entry.data.box;
     if (!box || !box.mesh) return;
     if (G.world && G.world.releaseStorageOf) G.world.releaseStorageOf(box);
+    if (G.physics) G.physics.detach(box);   // held 态无刚体
     unhighlight(entry);
     removeInteractable(entry);
     G.player.carrying = box;   // {mesh, productId, itemsLeft, body, label}
@@ -581,6 +599,7 @@
       });
     }
 
+    if (G.physics) G.physics.attach(carrying);   // held → loose，零初速
     G.player.carrying = null;
   }
 

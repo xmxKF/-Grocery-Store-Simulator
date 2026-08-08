@@ -886,6 +886,82 @@
         '门顶 ' + gateH + ' → 天花板 ' + (G.physics ? G.physics.CEIL_Y : '?') + '，空当 ' +
         round2((G.physics ? G.physics.CEIL_Y : 99) - gateH) + 'm，须 < 箱边长 0.45');
 
+      /* --- D-T2 箱三态与刚体生命周期（spec §3.4 / §5）--- */
+      var stSlotP = null;
+      for (var spi = 0; spi < G.world.storageSlots.length; spi++) {
+        if (!G.world.storageSlots[spi].box) { stSlotP = G.world.storageSlots[spi]; break; }
+      }
+      var pbox = G.world.spawnBox('f_noodle', { x: 6.0, z: 6.0 });
+      var trail = [];
+      if (pbox && stSlotP) {
+        trail.push(G.physics._test.stateOf(pbox) + ':' + (pbox.rb ? pbox.rb.type : 'none'));
+        G.player._test.pickUp(pbox);
+        trail.push(G.physics._test.stateOf(pbox) + ':' + (pbox.rb ? pbox.rb.type : 'none'));
+        G.player._test.putDown();
+        trail.push(G.physics._test.stateOf(pbox) + ':' + (pbox.rb ? pbox.rb.type : 'none'));
+        G.player._test.pickUp(pbox);
+        G.player._test.storeInto(stSlotP);
+        trail.push(G.physics._test.stateOf(pbox) + ':' + (pbox.rb ? pbox.rb.type : 'none'));
+        G.player._test.pickUp(pbox);
+        trail.push(G.physics._test.stateOf(pbox) + ':' + (pbox.rb ? pbox.rb.type : 'none'));
+        G.player._test.putDown();
+        trail.push(G.physics._test.stateOf(pbox) + ':' + (pbox.rb ? pbox.rb.type : 'none'));
+      }
+      ck('physics.boxStates',
+        trail.join('|') === 'loose:' + CANNON.Body.DYNAMIC + '|held:none|loose:' + CANNON.Body.DYNAMIC +
+        '|slotted:' + CANNON.Body.STATIC + '|held:none|loose:' + CANNON.Body.DYNAMIC,
+        '拿起→放下→存入→取出→放下 全环：' + trail.join(' → '));
+
+      var slotStaticOk = false, slotDrift = -1;
+      if (pbox && stSlotP) {
+        G.player._test.pickUp(pbox);
+        G.player._test.storeInto(stSlotP);
+        if (pbox.rb && pbox.rb.type === CANNON.Body.STATIC) {
+          pbox.rb.applyImpulse(new CANNON.Vec3(50, 0, 0), new CANNON.Vec3(pbox.rb.position.x, pbox.rb.position.y, pbox.rb.position.z));
+          for (var sst = 0; sst < 60; sst++) G.physics._test.stepOnce();
+          slotDrift = Math.sqrt(
+            Math.pow(pbox.mesh.position.x - stSlotP.pos.x, 2) +
+            Math.pow(pbox.mesh.position.z - stSlotP.pos.z, 2));
+          slotStaticOk = slotDrift < 1e-6;
+        }
+      }
+      ck('physics.slottedIsStatic', slotStaticOk,
+        'slotted 箱须为 STATIC 且 50N 冲量 + 60 步后不离位，实测位移 ' + slotDrift);
+
+      var dBefore = G.physics._test.bodyCount();
+      var dRb = pbox ? pbox.rb : null;
+      if (pbox) G.world.destroyBox(pbox);
+      var dAfter = G.physics._test.bodyCount();
+      var dGone = !!dRb && !G.physics._test.hasBody(dRb) && pbox.rb === null;
+      ck('physics.destroyRemovesBody', dAfter === dBefore - 1 && dGone,
+        'destroyBox 后 body 数 ' + dBefore + ' → ' + dAfter +
+        '，原 body 已不在 world.bodies 且 box.rb 已置空=' + dGone);
+
+      var mfBox = G.world.spawnBox('d_water', { x: 6.0, z: 5.0 });
+      var mfOk = false, mfDetail = '无箱';
+      if (mfBox && mfBox.rb) {
+        mfBox.rb.wakeUp();
+        mfBox.rb.velocity.set(0.6, 2.0, 0.4);
+        mfBox.rb.angularVelocity.set(2, 3, 1);
+        for (var mfi = 0; mfi < 30; mfi++) G.physics.update(1 / 60);
+        var mfDp = Math.sqrt(
+          Math.pow(mfBox.mesh.position.x - mfBox.rb.interpolatedPosition.x, 2) +
+          Math.pow(mfBox.mesh.position.y - mfBox.rb.interpolatedPosition.y, 2) +
+          Math.pow(mfBox.mesh.position.z - mfBox.rb.interpolatedPosition.z, 2));
+        var mfDq = Math.max(
+          Math.abs(mfBox.mesh.quaternion.x - mfBox.rb.quaternion.x),
+          Math.abs(mfBox.mesh.quaternion.y - mfBox.rb.quaternion.y),
+          Math.abs(mfBox.mesh.quaternion.z - mfBox.rb.quaternion.z),
+          Math.abs(mfBox.mesh.quaternion.w - mfBox.rb.quaternion.w));
+        // 箱必须真的转过：否则「写回 quaternion」与「压根没写」在数值上无法区分（空断言）
+        var mfSpun = Math.abs(mfBox.mesh.quaternion.w - 1) > 1e-3;
+        mfOk = mfDp < 1e-6 && mfDq < 1e-6 && mfSpun;
+        mfDetail = 'Δpos ' + mfDp + '，Δquat ' + mfDq + '，已转过（quat.w=' +
+          round2(mfBox.mesh.quaternion.w) + '）=' + mfSpun;
+      }
+      ck('physics.meshFollowsBody', mfOk, '30 帧后 mesh 必须逐字跟随 body：' + mfDetail);
+      if (mfBox) G.world.destroyBox(mfBox);
+
       ck('shadow.rendererState', !renderer ||
         (renderer.shadowMap.enabled === !!G.tex.on && (!G.tex.on || renderer.shadowMap.type === THREE.PCFSoftShadowMap)),
         'shadowMap enabled=' + (renderer && renderer.shadowMap.enabled) + ' type=' + (renderer && renderer.shadowMap.type));
@@ -1289,6 +1365,16 @@
         '连读 3 次后场上箱 ' + G.world.allBoxes().length + ' 只（应 3）' +
         JSON.stringify({ st: bxDup.storage.length, yard: bxDup.yard.length, floor: bxDup.floor.length }) +
         '，在途 ' + dqDup.length + ' 单');
+
+      var orphanLoose = G.physics.looseBoxes().length;
+      var orphanNonHeld = 0, orphanList = G.world.allBoxes();
+      for (var obi = 0; obi < orphanList.length; obi++) {
+        if (G.player.carrying !== orphanList[obi]) orphanNonHeld++;
+      }
+      ck('physics.noOrphanBodies',
+        G.physics._test.bodyCount() === G.physics._test.staticCount() + orphanNonHeld,
+        '连读 3 次后 body 总数 ' + G.physics._test.bodyCount() + ' = 静态 ' +
+        G.physics._test.staticCount() + ' + 非 held 箱 ' + orphanNonHeld + '；其中 loose ' + orphanLoose);
 
       /* --- C-T7 治漏与上限 --- */
       for (var pi2 = 0; pi2 < 200; pi2++) G.shop.setPrice('f_noodle', 2.0 + (pi2 % 30) * 0.1);

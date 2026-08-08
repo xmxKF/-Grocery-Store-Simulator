@@ -792,6 +792,8 @@
     slot.box = box;
     box.mesh.position.set(slot.pos.x, 0.225, slot.pos.z);
     box.mesh.rotation.set(0, 0, 0);
+    // slotted 锁死为静态刚体：休眠动态体被撞醒会离开存储位而 slot.box 仍指着它
+    if (G.physics) { G.physics.detach(box); G.physics.attachStatic(box); }
     // 重新注册为可交互箱（玩家举起时已被 removeInteractable；放回存储位即恢复）。
     // registerBoxInteractable 起手 retire 一次保证「一 mesh 一交互体」：玩家路径下是空转，
     // 直接调 API 存箱时防重复登记。
@@ -803,6 +805,7 @@
     if (!slot || !slot.box) return null;
     var box = slot.box;
     slot.box = null;
+    if (G.physics) G.physics.detach(box);   // 调用方接手定位；不留静态刚体钉在原位
     return box;
   }
 
@@ -1223,6 +1226,9 @@
   /* 彻底销毁一只箱：交互体 + 场景挂载 + 自有几何/材质（贴图是共享缓存，不 dispose） */
   function destroyBox(box) {
     if (!box || !box.mesh) return;
+    /* 刚体必须与 mesh 同生共死：丢垃圾桶 / restoreBoxes 起手清场 / boxHardCap 回收三条路径
+       都会走到这里，漏掉就在 cannon world 里留下永不清除、仍参与 broadphase 的孤儿刚体 */
+    if (G.physics) G.physics.detach(box);
     var slot = storageSlotOf(box);
     if (slot) slot.box = null;
     retireInteractable(box.mesh);
@@ -1257,8 +1263,10 @@
     group.add(label);
     sceneRef.add(group);
 
-    var box = { mesh: group, body: body, label: label, productId: pid, itemsLeft: product.boxSize };
+    var box = { mesh: group, body: body, label: label, productId: pid, itemsLeft: product.boxSize, rb: null };
     registerBoxInteractable(box);
+    // 一律建动态刚体；落到存储位的箱由随后的 storeBox 覆盖成静态（幂等，多一次 add/remove）
+    if (G.physics) G.physics.attach(box);
     return box;
   }
 
@@ -1380,6 +1388,7 @@
     restoreStorage: restoreStorage,
     allBoxes: allBoxes,
     destroyBox: destroyBox,
+    registerBoxInteractable: registerBoxInteractable,
     serializeBoxes: serializeBoxes,
     restoreBoxes: restoreBoxes,
     WALL_H: WALL_H,
