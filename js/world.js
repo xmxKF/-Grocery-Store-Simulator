@@ -585,10 +585,9 @@
       G.tex.on ? { map: G.tex.wallWainscot(segLen / 2, 1) } : null);
   }
 
-  /* collider 的可选字段 h（米）：只被 G.physics.syncStatics 读，省略视为 WALL_H。
+  /* 一段沿 x 铺开的墙（z 为墙面中线）：mesh + 一条厚 ±0.2 的 collider。
+     collider 的可选字段 h（米）：只被 G.physics.syncStatics 读，省略视为 WALL_H。
      寻路与玩家碰撞只读 minX/maxX/minZ/maxZ 四个 2D 字段，加 h 对它们零影响。 */
-
-  /* 一段沿 x 铺开的墙（z 为墙面中线）：mesh + 一条厚 ±0.2 的 collider */
   function wallAlongX(x0, x1, z) {
     var len = x1 - x0;
     var m = new THREE.Mesh(new THREE.BoxGeometry(len, WALL_H, WALL_T), wallMat(len));

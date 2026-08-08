@@ -844,6 +844,8 @@
         if (chc.zoneGate) want = 3.0;
         else if (chW === 2 && chD === 0.8) want = 1.8;
         else if (chW === 2 && chD === 1.2) want = 1.08;
+        else if (chW === 0.5 && chD === 0.4) want = 0.9;    // 订货电脑
+        else if (chW === 0.6 && chD === 0.6) want = 0.6;    // 垃圾桶
         if (!(chH > 0 && chH <= (G.world.WALL_H || 3.6))) { chOk = false; chBad = '#' + chi + ' h=' + chH + ' 越界'; break; }
         if (want !== null && chH !== want) { chOk = false; chBad = '#' + chi + ' ' + chW + '×' + chD + ' h=' + chH + '，应 ' + want; break; }
       }
@@ -862,6 +864,22 @@
       ck('physics.noInterpolatedQuaternion',
         !!G.physics && G.physics._test.src().indexOf('interpolatedQuaternion') === -1,
         'js/physics.js 整个模块（IIFE 全文）源码不得出现 interpolatedQuaternion（cannon 0.6.2 对醒着的动态体永不写入该字段，失效静默）');
+
+      /* CEIL_Y 除 §9.2 阴影视锥外还承载「翻不过关着的卷帘门」：门洞处墙体断开，
+         关闭的卷帘门静态体只到 h=3.0，其上到 WALL_H 的空当由天花板 plane 压住。
+         空当 ≥ 箱边长 0.45 就能隔着关门往未购区域扔箱（CEIL_Y ≥ 3.45 即开洞）。当前
+         WALL_H=3.6 下 ceilingCaps 恰好也在 3.45 跟着红，纯属巧合——WALL_H 一抬它就放宽，
+         而本条不动（详见 js/physics.js CEIL_Y 注释）。0.45 = 纸箱 BoxGeometry 边长，
+         physics 未导出 BOX_HALF，为这一处扩契约不值，故用字面量。 */
+      var gateH = 0;
+      for (var gi = 0; gi < G.world.colliders.length; gi++) {
+        var gc = G.world.colliders[gi];
+        if (gc.zoneGate && typeof gc.h === 'number' && gc.h > gateH) gateH = gc.h;
+      }
+      ck('physics.ceilingSealsZoneGates',
+        !!G.physics && gateH > 0 && (G.physics.CEIL_Y - gateH) < 0.45,
+        '门顶 ' + gateH + ' → 天花板 ' + (G.physics ? G.physics.CEIL_Y : '?') + '，空当 ' +
+        round2((G.physics ? G.physics.CEIL_Y : 99) - gateH) + 'm，须 < 箱边长 0.45');
 
       ck('shadow.rendererState', !renderer ||
         (renderer.shadowMap.enabled === !!G.tex.on && (!G.tex.on || renderer.shadowMap.type === THREE.PCFSoftShadowMap)),

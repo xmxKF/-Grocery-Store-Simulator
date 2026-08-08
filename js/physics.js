@@ -5,9 +5,12 @@
 // （只有 STATIC/SLEEPING 分支才 copy），失效是静默的——静止时看着完全正常、一扔就不转。
 // 位置写回用 body.interpolatedPosition，旋转写回用 body.quaternion。
 // 自测断言 physics.noInterpolatedQuaternion 扫描 _test.src()，而 src() 返回下面这个具名
-// 函数表达式 physicsModule 的 toString()，即【整个 IIFE 全文】——常量区、模块顶层代码、
-// 全部具名/匿名函数与它们函数体内的注释都在扫描面内，新增函数无需登记任何名单。
-// 唯一在扫描面之外的就是本段文件头注释（它在 IIFE 之外），所以字段名只能写在这里。
+// 函数表达式 physicsModule 的 toString()。
+// 【扫描面】= 该 IIFE 的函数体全文——常量区、模块顶层代码、全部具名/匿名函数与它们
+//   函数体内的注释都在内，新增函数无需登记任何名单。
+// 【盲区】= IIFE 之外的一切，即本段文件头注释 + `})();` 之后的文件尾（任何加在 IIFE
+//   之外的顶层代码或第二个 IIFE 都不被扫描）。本文件的全部逻辑必须写在这一个 IIFE 里，
+//   被禁字段名也只能出现在这段头注释里。
 (function physicsModule() {
   'use strict';
 
@@ -23,14 +26,20 @@
   var SLEEP_SPEED = 0.15;
   var SLEEP_TIME = 0.6;
 
-  /* 天花板高度 = WALL_H(3.6) − 0.20。求解器允许的穿透 + 箱以角朝上撞击会让 aabb 顶
-     比 plane 高出约 0.17m：plane 放 3.55 时实测 aabb 顶冲到 3.7041 > WALL_H。
-     3.40 是「阴影视锥完全不用改」这个裁定的唯一依据（spec §9.2），不得擅自调整。 */
+  /* 天花板高度 = WALL_H(3.6) − 0.20。不得擅自调整——它同时被两条独立的约束钉住：
+     1) 阴影视锥不用改（spec §9.2）：求解器允许的穿透 + 箱以角朝上撞击会让 aabb 顶比
+        plane 高出约 0.17m，plane 放 3.55 时实测 aabb 顶冲到 3.7041 > WALL_H；3.40 实测 3.5115。
+     2) 翻不过关着的卷帘门：门洞处墙体是断开的，关闭的卷帘门静态体只到 h=3.0，其上到
+        WALL_H 的空当只由天花板 plane 压住。空当 ≥ 箱边长 0.45 就能隔着关门往未购区域
+        扔箱，即 CEIL_Y ≥ 3.45 就开洞。
+     (1) 与 (2) 在当前 WALL_H=3.6 下恰好同阈值（CEIL_Y=3.45 实测 v0=9.0 → 3.5704 尚绿、
+     v0=12.0 → 3.62 > 3.6 已红），但这是巧合：两者量的不是一回事，WALL_H 一抬 (1) 立刻
+     放宽而 (2) 纹丝不动（WALL_H=4.0 时 (1) 可放行 CEIL_Y≈3.85，门顶空当 0.85 ≫ 0.45，
+     exploit 大开）。断言 physics.ceilingSealsZoneGates 专守 (2)，不可靠 ceilingCaps 代劳。 */
   var CEIL_Y = 3.40;
 
   var FIXED_STEP = 1 / 60;
   var MAX_SUB_STEPS = 10;        // 主循环 dt 已钳到 0.1s，最坏 6 个子步，永不触发截断
-  var DEFAULT_H = 3.6;           // collider 省略 h 时的默认高度（= WALL_H）
 
   var world = null;
   var boxMat = null, staticMat = null;
@@ -84,9 +93,13 @@
     for (i = 0; i < staticBodies.length; i++) world.removeBody(staticBodies[i]);
     staticBodies.length = 0;
     var cols = (G.world && G.world.colliders) || [];
+    /* collider 省略 h 时的默认高度就是 WALL_H，必须在这里现取、不能在模块顶层缓存成
+       字面量：physics.js 先于 world.js 加载（顶层取不到 G.world），而存一份 3.6 的拷贝
+       会在 WALL_H 改动时让全部墙/围栏的物理高度静默停在 3.6，且没有任何断言会报警。 */
+    var defH = (G.world && G.world.WALL_H) || 3.6;
     for (i = 0; i < cols.length; i++) {
       var col = cols[i];
-      var h = (typeof col.h === 'number' && col.h > 0) ? col.h : DEFAULT_H;
+      var h = (typeof col.h === 'number' && col.h > 0) ? col.h : defH;
       var body = new CANNON.Body({ mass: 0, material: staticMat });
       body.addShape(new CANNON.Box(new CANNON.Vec3(
         (col.maxX - col.minX) / 2, h / 2, (col.maxZ - col.minZ) / 2)));

@@ -27,7 +27,6 @@
 `index.html` script 顺序（固定）：
 `libs/three.min.js` → `libs/cannon.min.js` → `js/data.js` → `js/state.js` → `js/textures.js` → `js/physics.js` → `js/world.js` → `js/player.js` → `js/shop.js` → `js/customers.js` → `js/checkout.js` → `js/ui.js` → `js/main.js`
 **`js/physics.js` 必须在 `js/world.js` 之前**（D 期）：`world.init()` 会走到 `rebuildGraph → syncStatics`，若 `G.physics` 未定义，`syncStatics()` 无从调用。
-（D-T1 前 `index.html` 尚未接入 cannon 与 physics，此顺序自 D-T1 起生效，见 spec §2.5——在此之前 `index.html` 实况仍是不含二者的旧顺序，与本行不同步是预期状态，不是契约与实况脱节。）
 
 `index.html` 固定 DOM id（ui/checkout 只能用这些容器）：
 `#app`(canvas 容器) `#hud` `#hud-money` `#hud-day` `#hud-clock` `#hud-level` `#crosshair` `#charge` `#prompt` `#toast` `#screen-menu` `#screen-computer` `#screen-summary` `#pos` `#selftest`(隐藏 pre)
@@ -244,7 +243,7 @@ G.ui.setCharge(v /*0..1 显示并设填充宽度；null 隐藏*/)   // D 期；#
     1. `--user-data-dir` 会把 `gss-lowfx` 留在 profile 里。两态必须用**各自独立**的 profile 目录并在**每次跑前 `rm -rf`**，否则正常态会静默跑成 lowfx（表现为断言总数变少、`tex.*` 整块消失）。
     2. **`&lowfx=1` URL 参数不存在。** lowfx 态只能用跳板页：一个临时 html 先 `localStorage.setItem('gss-lowfx','1')` 再 `location.replace('index.html?selftest=1')`，且必须带 `--allow-file-access-from-files`。
     3. 在受沙箱约束的 shell 里调用 headless Edge 会静默产出 0 字节 DOM（无报错）。必须在不受沙箱约束的方式下调用。
-  - 当前基线：正常态 **132/132**、lowfx **127/127**（D-T0 实测）。
+  - 当前基线：正常态 **140/140**、lowfx **135/135**（D-T1 实测）。
 
 ## 共享工具（state.js 提供，全模块可用）
 ```js
@@ -292,6 +291,7 @@ G.clamp(v, a, b)
 - `userData.shell`：world.js 打标（`addShell()` 7 个调用点，满配实测 **21** 个壳体 mesh：地板 1 + 天花板 1 + 外墙 6 段 + 内隔墙 7 段 + 门框柱 4 + 东西院混凝土地面 2）、main.js 自测 shellNoCast 断言消费——壳体绝不 castShadow 的硬标记。
 - **静态刚体的单一真相源是 `G.world.colliders`**（D 期）：`G.physics.syncStatics()` 全量重建，绝不手写第二份几何表；`rebuildGraph()` 的每个调用点必须同步调 `syncStatics()`。断言 `physics.staticsMatchColliders` / `physics.staticsAfterZoneOpen`。
 - **`interpolatedQuaternion` 在本项目中禁止使用**（D 期）：cannon 0.6.2 对醒着的动态体根本不写入该字段（永远是单位四元数），失效是静默的（表现为「箱不转」）。位置写回用 `body.interpolatedPosition`，旋转写回用 `body.quaternion`。断言 `physics.noInterpolatedQuaternion` 源码级钉死。
+- **`G.physics.CEIL_Y − 卷帘门 collider 的 h` 必须 < 箱边长 0.45**（D 期）：门洞处墙体是断开的，关闭的卷帘门静态体只到 `h = 3.0`，其上到 `WALL_H` 的空当只由天花板 plane 压住；空当 ≥ 0.45 就能隔着关着的门往未购区域扔箱。`CEIL_Y ≥ 3.45` 即开洞。当前 `WALL_H = 3.6` 下 `physics.ceilingCaps` 恰好也在 3.45 跟着红（v0=9.0 支路 3.5704 尚绿、v0=12.0 支路 3.62 已红），**但这是巧合，不能依赖**：`WALL_H` 一旦抬高，`ceilingCaps` 立刻放宽而本条纹丝不动（`WALL_H = 4.0` 时 `ceilingCaps` 可放行 `CEIL_Y ≈ 3.85`，门顶空当 0.85 ≫ 0.45）。`CEIL_Y` 不是只被阴影视锥（spec §9.2）一条约束钉住的。断言 `physics.ceilingSealsZoneGates`。
 - **箱三态与其刚体形态一一对应**（D 期）：`held`（`G.player.carrying === box`）无刚体；`slotted`（`storageSlotOf(box) !== null`）静态刚体 `mass 0`；`loose`（其余）动态刚体。四个转移入口 `pickUpBox` / `putDownBox` / `storeBox` / `releaseThrow` 各恰好一行物理调用，另加 `spawnBox` / `takeBox` / `destroyBox` / `restoreBoxes` 四处非玩家路径。
 - **`G.customers._test.stepOne(c, dt)`**（D 期，仅供自测）：跑一名顾客的完整每帧流程（`stepKnockdown` → 非倒地时 `stepAvoid`/`stepMove`/`applyGait` → `stepState`），与 `update()` 的循环体同源同函数。
 
