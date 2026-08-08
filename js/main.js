@@ -1213,10 +1213,16 @@
       var wcOk = !!wcWall, wcTrace = [];
       if (wcWall) {
         var wcMid = (wcWall.minZ + wcWall.maxZ) / 2;      // 南外墙中面 z = -10
-        var wcStand = wcWall.maxZ + 0.35;                 // 贴到不能再近：z = -9.55
+        /* 贴到不能再近：z = -9.45。注意 collider 半厚是 0.2（总厚 0.4），而墙 mesh 用
+           WALL_T=0.2 是总厚（半厚 0.1）—— 按墙面几何反推会算成 -9.55，差 0.1m。 */
+        var wcStand = wcWall.maxZ + 0.35;
         [0, 0.8].forEach(function (wct) {
           var wb = G.world.spawnBox('h_tissue', { x: 0, z: -8 });
-          if (!wb || !G.player._test.pickUp(wb)) { wcOk = false; wcTrace.push('t=' + wct + ' 无箱'); return; }
+          if (!wb || !G.player._test.pickUp(wb)) {
+            wcOk = false; wcTrace.push('t=' + wct + ' 无箱');
+            if (wb) G.world.destroyBox(wb);
+            return;
+          }
           G.player.setPose({ x: (wcWall.minX + wcWall.maxX) / 2, z: wcStand, yaw: 0, pitch: 0 });   // 平视朝 -z
           G.player._test.charge(wct);
           var wcV = G.player._test.peekThrow().speed;
@@ -1234,7 +1240,8 @@
       }
       G.player.setPose(wcPose);
       ck('player.throwNoWallClip', wcOk,
-        wcWall ? ('站位 z=-9.55 平视扔向中面 z=-10 的南外墙，箱心须全程留在己侧（z > -10）：' +
+        wcWall ? ('站位 z=' + round2(wcStand) + ' 平视扔向中面 z=' + wcMid +
+          ' 的南外墙，箱心须全程留在己侧（z > ' + wcMid + '）：' +
           wcTrace.join(' | ')) : '找不到南外墙 collider');
 
       /* 蓄力仲裁：准星指向任何类型都不影响蓄力；左键既有行为不受影响、可与右键同时生效；

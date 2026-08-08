@@ -105,14 +105,19 @@ G.physics.detach(box)             // 从 world 移除 box.rb，box.rb = null；�
 G.physics.throwBox(box, dir /*THREE.Vector3 单位向量*/, speed, spin /*{x,y,z}*/)   // attach 后设 velocity/angularVelocity
 G.physics.looseBoxes()            // -> [box]（箱实体，不是 body）。【只读、共用同一个内部数组，调用方不得持有跨帧】
                                   // 调用方从 box.mesh.position 与 box.rb.velocity 取值
+G.physics.heightOf(collider)      // -> 该 collider 的竖直高度（占 y ∈ 0..h）；缺省 h 时返回 G.world.WALL_H。
+                                  // 【唯一真相源】需要 collider 高度的代码一律调它，不得再抄一份「缺省 = WALL_H」
 G.physics.CEIL_Y                  // 3.40 = WALL_H − 0.20（spec §9.2 实测定值，改它必须重跑 physics.ceilingCaps）
+G.physics.BOX_HALF                // 0.225 = 纸箱边长 0.45 的一半（mesh 与刚体零偏移）。
+                                  // 需要箱半边长的代码一律读它，不得再抄一份 0.225
 G.physics._test                   // 仅供自测：bodyCount() / staticCount()（只数 collider 静态体 + 2 plane，不含 slotted 箱）
                                   // / hasBody(body) / stateOf(box) -> 'held'|'slotted'|'loose' / stepOnce()
                                   // / src() / probeCeiling(v0) / probeTunnel(speed)
 ```
 - **刚体引用字段名是 `box.rb`，不是 `box.body`**（`box.body` 已被占用：它是纸箱的纸板 mesh，且 `destroyBox` 会对它调 `geometry.dispose()`）。
 - **箱实体的所有权仍归 world.js**：`G.physics` 只持 `box.rb` 引用，`allBoxes()` 仍是唯一枚举口径。
-- `G.world.colliders` 的每条可带**可选**高度字段 `h`（米，缺省视为 `WALL_H` 3.6）。**`h` 只被 physics.syncStatics 读取；寻路（`segHitsBox`）与玩家碰撞（`collidesAt`）只读 `minX/maxX/minZ/maxZ` 四个 2D 字段，不得读 `h`。**
+- `G.world.colliders` 的每条可带**可选**高度字段 `h`（米，缺省视为 `WALL_H` 3.6）。**读 `h` 的只有两处：`physics.syncStatics`（建静态刚体）与 `player.boxFitsAt`（D-T3 钳投掷出手点），且两者必须一律经 `G.physics.heightOf(collider)` 取值——绝不各抄一份「缺省 = WALL_H」，两份口径漂移会让钳位按错误高度放行，投掷穿墙的缺陷在窄带内重开且无断言报警。寻路（`segHitsBox`）与玩家碰撞（`collidesAt`）只读 `minX/maxX/minZ/maxZ` 四个 2D 字段，不得读 `h`。**
+- **墙的 mesh 半厚 0.1、collider 半厚 0.2**：`wallAlongX/Z` 的 `BoxGeometry` 用 `WALL_T = 0.2` 作**总**厚（半厚 0.1），而同一段推入的 collider 是 `z ± 0.2` / `x ± 0.2`（**总厚 0.4**，比 mesh 宽一圈，是有意的留白）。**任何按墙面几何反推坐标的代码或断言一律按 collider 的 0.2 半厚算**，按 mesh 的 0.1 推会整整差 0.1 m（D-T3 的 `player.throwNoWallClip` 站位就被咬过一次：南外墙中面 z = −10，贴墙站位是 −9.45 而不是 −9.55）。几何本身不改——改了要连带重跑寻路 `NAV_INFLATE`、收银站位与 `isOnYard` 一整串。
 - `rebuildGraph()` 的每一个调用点都必须紧跟一行 `if (G.physics) G.physics.syncStatics();`。漂移由断言 `physics.staticsMatchColliders` 钉死。
 
 ### G.world（world.js）

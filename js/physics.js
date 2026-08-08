@@ -86,6 +86,18 @@
     planeCount = W.planes;
   }
 
+  /* 【唯一真相源】一条 collider 的竖直高度（占 y ∈ 0..h）。省略 h 视为 WALL_H，
+     必须在调用时现取、不能在模块顶层缓存成字面量：physics.js 先于 world.js 加载
+     （顶层取不到 G.world），而存一份 3.6 的拷贝会在 WALL_H 改动时让全部墙/围栏的
+     物理高度静默停在 3.6，且没有任何断言会报警。
+     读者不止本模块：player.boxFitsAt 钳出手点时也必须按同一口径过滤（否则 collider
+     高度规则一改而那份不改，投掷钳位会按错误高度放行，D-T3 的 C1 会在窄带内重开）。
+     任何需要 collider 高度的代码一律调本函数，不得再抄一份「缺省 = WALL_H」。 */
+  function heightOf(col) {
+    if (col && typeof col.h === 'number' && col.h > 0) return col.h;
+    return (G.world && G.world.WALL_H) || 3.6;
+  }
+
   /* 全量重建：先清后建。地/天花板 plane 不参与。
      【唯一真相源】静态刚体只从 G.world.colliders 生成，绝不手写第二份几何表 */
   function syncStatics() {
@@ -94,13 +106,9 @@
     for (i = 0; i < staticBodies.length; i++) world.removeBody(staticBodies[i]);
     staticBodies.length = 0;
     var cols = (G.world && G.world.colliders) || [];
-    /* collider 省略 h 时的默认高度就是 WALL_H，必须在这里现取、不能在模块顶层缓存成
-       字面量：physics.js 先于 world.js 加载（顶层取不到 G.world），而存一份 3.6 的拷贝
-       会在 WALL_H 改动时让全部墙/围栏的物理高度静默停在 3.6，且没有任何断言会报警。 */
-    var defH = (G.world && G.world.WALL_H) || 3.6;
     for (i = 0; i < cols.length; i++) {
       var col = cols[i];
-      var h = (typeof col.h === 'number' && col.h > 0) ? col.h : defH;
+      var h = heightOf(col);
       var body = new CANNON.Body({ mass: 0, material: staticMat });
       body.addShape(new CANNON.Box(new CANNON.Vec3(
         (col.maxX - col.minX) / 2, h / 2, (col.maxZ - col.minZ) / 2)));
@@ -254,6 +262,7 @@
     detach: detach,
     throwBox: throwBox,
     looseBoxes: looseBoxes,
+    heightOf: heightOf,
     CEIL_Y: CEIL_Y,
     BOX_HALF: BOX_HALF,   // player.releaseThrow 钳出手点要用；不得在别处再抄一份 0.225
     _test: {

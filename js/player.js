@@ -394,16 +394,15 @@
   }
 
   /* 箱体 AABB（半边长取 physics 的 BOX_HALF，不另抄一份）是否压在某条静态 collider 上。
-     collider 竖直范围是 0..h（省略 h 视为 WALL_H，与 physics.syncStatics 同口径），
+     collider 竖直范围是 0..G.physics.heightOf(c)——高度口径必须与建静态刚体的
+     physics.syncStatics 走同一个函数，两份口径一旦漂移，钳位会按错误高度放行。
      必须按高度过滤：否则 h=0.6 的垃圾桶/地面标记会把齐胸高的出手点误判成挡住。 */
   function boxFitsAt(x, y, z) {
     var colliders = (G.world && G.world.colliders) || [];
     var r = G.physics.BOX_HALF;
-    var defH = (G.world && G.world.WALL_H) || 3.6;
     for (var i = 0; i < colliders.length; i++) {
       var c = colliders[i];
-      var h = (typeof c.h === 'number' && c.h > 0) ? c.h : defH;
-      if (h <= y - r) continue;
+      if (G.physics.heightOf(c) <= y - r) continue;
       if (x + r > c.minX && x - r < c.maxX && z + r > c.minZ && z - r < c.maxZ) return false;
     }
     return true;
